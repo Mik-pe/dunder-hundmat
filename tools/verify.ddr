@@ -1,0 +1,40 @@
+capability process, network, filesystem
+
+import .common as common
+import .test_graphics as test_graphics
+import .test_http as test_http
+import .test_tabell as test_tabell
+import std.fs as fs
+import std.process as process
+import std.text as text
+import sys
+
+fn run_dunder_tests(compiler: string, suite_path: string, out_path: string) -> bool {
+    var cmd := process.command(compiler, ["test", suite_path, "-o", out_path])
+    process.set_timeout(&mut cmd, 120000)
+    res := process.exec(&cmd)
+    if res.stdout.len > 0 { print(text.trim(process.stdout_text(&res))) }
+    if !process.succeeded(&res) {
+        return common.fail("dunder test failed on " + suite_path + ": " + process.stderr_text(&res))
+    }
+    true
+}
+
+fn main() -> i32 {
+    cli := common.parse_cli(true)
+    if !cli.ok { _ := sys.eprint(cli.error); return 2 }
+
+    tmp := fs.temp_dir("dunder-hundmat-verify-")
+    if !tmp.ok { _ := common.fail("temp_dir failed"); return 1 }
+    work := tmp.value
+    defer { _ := fs.remove_all(work) }
+
+    if !run_dunder_tests(cli.compiler, cli.root + "/dogfood/tests.ddr", work + "/dogfood-tests") { return 1 }
+    if !test_tabell.run_suite(cli.compiler, cli.root) { return 1 }
+    if !test_graphics.run_suite(cli.compiler, cli.root, cli.graphics) { return 1 }
+    if !run_dunder_tests(cli.compiler, cli.root + "/http/src/tests.ddr", work + "/http-tests") { return 1 }
+    if !test_http.run_suite(cli.compiler, cli.root) { return 1 }
+
+    print("PASS all dunder-hundmat suites")
+    0
+}

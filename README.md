@@ -9,10 +9,10 @@ större dogfood-program utanför språkets kärnrepo [`dunder`](https://github.c
 
 ## Verifiering
 
-Kör samtliga tester och serverns integrations-/lastsvit mot en byggd `dunder`-binär:
+Samtliga verifierings- och integrationsverktyg i `tools/` är skrivna i ren Dunder (`std.process`, `std.fs`, `std.json`, `std.net`). Kör hela sviten mot en byggd `dunder`-binär:
 
 ```sh
-python3 tools/verify.py /sökväg/till/dunder
+/sökväg/till/dunder run tools/verify.ddr -- /sökväg/till/dunder
 ```
 
 För enstaka delar:
@@ -20,7 +20,7 @@ För enstaka delar:
 ```sh
 /sökväg/till/dunder test dogfood/tests.ddr
 /sökväg/till/dunder test http/src/tests.ddr
-python3 tools/test-tabell.py /sökväg/till/dunder
-python3 tools/test-graphics.py /sökväg/till/dunder
-python3 tools/test-http.py /sökväg/till/dunder
+/sökväg/till/dunder run tools/test_tabell.ddr -- /sökväg/till/dunder
+/sökväg/till/dunder run tools/test_graphics.ddr -- /sökväg/till/dunder
+/sökväg/till/dunder run tools/test_http.ddr -- /sökväg/till/dunder
 ```

@@ -108,14 +108,14 @@ macOS-app och Vulkan-exemplet för båda Linux-målen. Den verifierar ELF-filern
 arkitektur, dynamiska laddare, segmenträttigheter och reproducerbarhet.
 
 ```sh
-python3 tools/test-native.py "$dunder"
+"$dunder" run tools/test_graphics.ddr -- "$dunder"
 ```
 
 För körprov med den valda Vulkan-drivrutinen och Khronos valideringslager:
 
 ```sh
 sudo apt install vulkan-validationlayers
-VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation python3 tools/test-native.py "$dunder" --graphics
+VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation "$dunder" run tools/test_graphics.ddr -- "$dunder" --graphics
 ```
 
 Med `--graphics` renderar både triangeln och Atlas tre bildrutor. Separata

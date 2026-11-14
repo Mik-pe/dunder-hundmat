@@ -1,0 +1,107 @@
+capability filesystem
+
+import std.fs as fs
+import sys
+
+pub struct CliArgs {
+    ok: bool,
+    compiler: string,
+    root: string,
+    graphics: bool,
+    error: string,
+}
+
+fn is_repo_root(dir: string) -> bool {
+    if dir.len == 0 { return false }
+    a := sys.metadata(dir + "/dogfood/tests.ddr")
+    b := sys.metadata(dir + "/tabell/dunder.toml")
+    c := sys.metadata(dir + "/http/dunder.toml")
+    a.ok && a.is_file && b.ok && b.is_file && c.ok && c.is_file
+}
+
+fn parent_dir(path: string) -> string {
+    var end := path.len
+    while end > 1 && path[end - 1] == 47 { end -= 1 }
+    var i := end - 1
+    while i >= 0 {
+        if path[i] == 47 {
+            if i == 0 { return "/" }
+            return path[0..i]
+        }
+        i -= 1
+    }
+    ""
+}
+
+fn find_repo_root(explicit_root: string) -> string {
+    if explicit_root.len > 0 {
+        rp := fs.realpath(explicit_root)
+        if rp.ok && is_repo_root(rp.value) { return rp.value }
+        return ""
+    }
+    cur := fs.cwd()
+    if cur.ok {
+        var d := cur.value
+        for _ in 0..8 {
+            if is_repo_root(d) { return d }
+            next := parent_dir(d)
+            if next.len == 0 || next == d { break }
+            d = next
+        }
+    }
+    arg0 := fs.realpath(sys.arg(0))
+    if arg0.ok {
+        var d := parent_dir(arg0.value)
+        for _ in 0..8 {
+            if is_repo_root(d) { return d }
+            next := parent_dir(d)
+            if next.len == 0 || next == d { break }
+            d = next
+        }
+    }
+    ""
+}
+
+pub fn parse_cli(allow_graphics: bool) -> CliArgs {
+    var compiler_arg := ""
+    var explicit_root := ""
+    var graphics := false
+    count := sys.arg_count()
+    var i := 1
+    while i < count {
+        a := sys.arg(i)
+        if a == "--graphics" && allow_graphics {
+            graphics = true
+        } else if a == "--root" {
+            if i + 1 >= count {
+                return CliArgs { ok: false, compiler: "", root: "", graphics: false, error: "missing path after --root" }
+            }
+            i += 1
+            explicit_root = sys.arg(i)
+        } else if a.len > 0 && a[0] == 45 {
+            return CliArgs { ok: false, compiler: "", root: "", graphics: false, error: "unknown option: " + a }
+        } else if compiler_arg.len == 0 {
+            compiler_arg = a
+        } else {
+            return CliArgs { ok: false, compiler: "", root: "", graphics: false, error: "unexpected argument: " + a }
+        }
+        i += 1
+    }
+    if compiler_arg.len == 0 {
+        return CliArgs { ok: false, compiler: "", root: "", graphics: false, error: "usage: <tool> /path/to/dunder [--root /path/to/dunder-hundmat]" }
+    }
+    comp := fs.realpath(compiler_arg)
+    if !comp.ok {
+        return CliArgs { ok: false, compiler: "", root: "", graphics: false, error: "compiler not found: " + compiler_arg }
+    }
+    root := find_repo_root(explicit_root)
+    if root.len == 0 {
+        return CliArgs { ok: false, compiler: "", root: "", graphics: false, error: "could not locate dunder-hundmat root; pass --root <dir>" }
+    }
+    CliArgs { ok: true, compiler: comp.value, root: root, graphics: graphics, error: "" }
+}
+
+pub fn fail(msg: string) -> bool {
+    _ := sys.eprint("FAIL: " + msg)
+    false
+}

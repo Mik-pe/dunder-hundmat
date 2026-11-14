@@ -1,0 +1,169 @@
+capability process, filesystem
+
+import .common as common
+import std.array as array
+import std.bytes as bytes
+import std.fs as fs
+import std.map as map
+import std.process as process
+import std.text as text
+import sys
+
+fn write_csv_field(out: &mut []u8, field: string) {
+    var needs_quote := false
+    for b in field.bytes() {
+        if b == 44 || b == 34 || b == 10 || b == 13 {
+            needs_quote = true
+            break
+        }
+    }
+    if !needs_quote {
+        bytes.append_utf8(&mut out, field)
+        return
+    }
+    out.push(b'"')
+    for b in field.bytes() {
+        if b == 34 { out.push(b'"') }
+        out.push(u8(b))
+    }
+    out.push(b'"')
+}
+
+fn bytes_equal(a: &[]u8, b: &[]u8) -> bool {
+    if a.len != b.len { return false }
+    for i in 0..a.len {
+        if a[i] != b[i] { return false }
+    }
+    true
+}
+
+fn run_compiler_isolated(compiler: string, args: []string, cwd: string, timeout_ms: i64) -> bool {
+    var cmd := process.command(compiler, args)
+    process.set_cwd(&mut cmd, cwd)
+    process.clear_env(&mut cmd)
+    process.set_env(&mut cmd, "PATH", "")
+    process.set_timeout(&mut cmd, timeout_ms)
+    out := process.exec(&cmd)
+    if out.stdout.len > 0 { print(text.trim(process.stdout_text(&out))) }
+    if !process.succeeded(&out) {
+        return common.fail("compiler failed: " + process.stderr_text(&out))
+    }
+    true
+}
+
+fn run_tabell(binary: string, args: []string, cwd: string, expected_code: i32, out_res: &mut process.Output) -> bool {
+    var cmd := process.command(binary, args)
+    process.set_cwd(&mut cmd, cwd)
+    process.clear_env(&mut cmd)
+    process.set_timeout(&mut cmd, 15000)
+    res := process.exec(&cmd)
+    if !res.ok || res.timed_out || res.signal != 0 || res.code != expected_code {
+        return common.fail("tabell unexpected exit " + res.code.str() + " expected " + expected_code.str() + ": " + process.stderr_text(&res))
+    }
+    if expected_code != 0 {
+        if res.stderr.len == 0 || res.stdout.len != 0 {
+            return common.fail("tabell error run must write stderr only")
+        }
+        if expected_code == 1 && !text.starts_with(process.stderr_text(&res), "tabell:") {
+            return common.fail("tabell exit 1 stderr missing 'tabell:' prefix: " + process.stderr_text(&res))
+        }
+    } else if res.stderr.len != 0 {
+        return common.fail("tabell success wrote unexpected stderr: " + process.stderr_text(&res))
+    }
+    out_res = res
+    true
+}
+
+pub fn run_suite(compiler: string, root: string) -> bool {
+    project := root + "/tabell"
+    tmp := fs.temp_dir("dunder-tabell-")
+    if !tmp.ok { return common.fail("temp_dir failed") }
+    work := tmp.value
+    defer { _ := fs.remove_all(work) }
+
+    binary := work + "/tabell"
+    if !run_compiler_isolated(compiler, ["build", "-o", binary], project, 60000) { return false }
+    if !run_compiler_isolated(compiler, ["test", "-o", work + "/tests"], project, 90000) { return false }
+
+    var empty_out := process.Output { ok: false, error: 0, code: 0, signal: 0, timed_out: false, stdout: [], stderr: [] }
+    if !run_tabell(binary, [project + "/expenses.csv", "team", "cents"], work, 0, &mut empty_out) { return false }
+    exp_file := sys.read_u8(project + "/expected.csv")
+    if !exp_file.ok || !bytes_equal(&empty_out.stdout, &exp_file.value) {
+        return common.fail("expenses.csv output differed from expected.csv")
+    }
+
+    // Generate 512-row UTF-8 BOM CSV with special characters, quotes, embedded newlines, and signed 64-bit sums.
+    csv_path := work + "/rapport å 🌍.csv"
+    keys: []string = ["", "alpha", "Åsa", "comma,value", "quote\"value", "line\nvalue", "emoji 🌍", "Örn"]
+    var totals := map.new()
+    var csv_bytes: []u8 = [0xef, 0xbb, 0xbf]
+    bytes.append_utf8(&mut csv_bytes, "memo,amount,group\r\n")
+    for i in 0..512 {
+        key := keys[(i * 17 + i / 7) % keys.len]
+        amount := i64(i % 13 - 6) * 2000000003
+        write_csv_field(&mut csv_bytes, "ignored, " + i.str())
+        csv_bytes.push(b',')
+        bytes.append_decimal(&mut csv_bytes, amount)
+        csv_bytes.push(b',')
+        write_csv_field(&mut csv_bytes, key)
+        csv_bytes.push(b'\r')
+        csv_bytes.push(b'\n')
+        map.put(&mut totals, key, map.get_or(&totals, key, 0) + amount)
+    }
+    if !sys.write_u8(csv_path, &csv_bytes).ok { return common.fail("failed writing generated CSV") }
+
+    var sorted_keys := map.keys(&totals)
+    array.sort_strings(&mut sorted_keys)
+    var expected_bytes: []u8 = []
+    bytes.append_utf8(&mut expected_bytes, "group,total\n")
+    for k in sorted_keys {
+        write_csv_field(&mut expected_bytes, k)
+        expected_bytes.push(b',')
+        bytes.append_decimal(&mut expected_bytes, map.get_or(&totals, k, 0))
+        expected_bytes.push(b'\n')
+    }
+
+    if !run_tabell(binary, [csv_path, "group", "amount"], work, 0, &mut empty_out) { return false }
+    if !bytes_equal(&empty_out.stdout, &expected_bytes) {
+        return common.fail("512-row UTF-8 BOM CSV summary did not match reference")
+    }
+
+    bad_inputs: []string = [
+        "group,amount\na,9223372036854775807\na,1",
+        "group,amount\r\n\"first\r\nsecond\",3\r\nbad,x\r\n",
+        "group,amount\n\"first\nsecond\"x,1",
+        "group,amount\na,1,extra",
+    ]
+    bad_lines: []i32 = [3, 4, 3, 2]
+    for idx in 0..bad_inputs.len {
+        if !sys.write_text(csv_path, bad_inputs[idx]).ok { return false }
+        if !run_tabell(binary, [csv_path, "group", "amount"], work, 1, &mut empty_out) { return false }
+        prefix := "tabell: line " + bad_lines[idx].str() + ":"
+        if !text.starts_with(process.stderr_text(&empty_out), prefix) {
+            return common.fail("expected '" + prefix + "', got: " + process.stderr_text(&empty_out))
+        }
+    }
+
+    var invalid_utf8: []u8 = []
+    bytes.append_utf8(&mut invalid_utf8, "group,amount\n")
+    invalid_utf8.push(0xff)
+    bytes.append_utf8(&mut invalid_utf8, ",1")
+    if !sys.write_u8(csv_path, &invalid_utf8).ok { return false }
+    if !run_tabell(binary, [csv_path, "group", "amount"], work, 1, &mut empty_out) { return false }
+
+    if !sys.remove_file(csv_path).ok { return false }
+    if !run_tabell(binary, [csv_path, "group", "amount"], work, 1, &mut empty_out) { return false }
+    if !run_tabell(binary, [], work, 2, &mut empty_out) { return false }
+    if !run_tabell(binary, ["--help"], work, 0, &mut empty_out) { return false }
+    if empty_out.stdout.len == 0 { return common.fail("--help returned empty stdout") }
+
+    print("Tabell CSV output, grouping, input errors and exit codes passed")
+    true
+}
+
+fn main() -> i32 {
+    cli := common.parse_cli(false)
+    if !cli.ok { _ := sys.eprint(cli.error); return 2 }
+    if !run_suite(cli.compiler, cli.root) { return 1 }
+    0
+}

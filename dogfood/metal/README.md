@@ -77,7 +77,7 @@ open build/DunderMetal.app
 Kör från `dunder-hundmat`:
 
 ```sh
-python3 tools/test-graphics.py /sökväg/till/dunder --graphics
+/sökväg/till/dunder run tools/test_graphics.ddr -- /sökväg/till/dunder --graphics
 ```
 
 Kontrollen ritar tre bildrutor vardera med triangeln och Atlas, öppnar och

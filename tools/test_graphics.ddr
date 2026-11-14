@@ -1,0 +1,228 @@
+capability process, filesystem
+
+import .common as common
+import std.bytes as bytes
+import std.fs as fs
+import std.process as process
+import std.text as text
+import sys
+
+fn bytes_equal(a: &[]u8, b: &[]u8) -> bool {
+    if a.len != b.len { return false }
+    for i in 0..a.len {
+        if a[i] != b[i] { return false }
+    }
+    true
+}
+
+fn check_elf(image: &[]u8, machine: i32, interpreter: string) -> bool {
+    if image.len < 64 { return common.fail("ELF image shorter than header") }
+    if image[0] != 0x7f || image[1] != b'E' || image[2] != b'L' || image[3] != b'F' || image[4] != 2 || image[5] != 1 {
+        return common.fail("invalid ELF64 little-endian magic")
+    }
+    if bytes.u16_le(&image, 18) != machine {
+        return common.fail("unexpected ELF e_machine")
+    }
+    table := i32(bytes.u64_le(&image, 32))
+    stride := bytes.u16_le(&image, 54)
+    count := bytes.u16_le(&image, 56)
+    if stride < 56 || table < 0 || table + count * stride > image.len {
+        return common.fail("invalid ELF program header table bounds")
+    }
+    var interp_count := 0
+    for i in 0..count {
+        off := table + i * stride
+        kind := bytes.u32_le(&image, off)
+        if kind == 3 {
+            seg_off := i32(bytes.u64_le(&image, off + 8))
+            seg_size := i32(bytes.u64_le(&image, off + 32))
+            if seg_off < 0 || seg_size != interpreter.len + 1 || seg_off + seg_size > image.len {
+                return common.fail("ELF PT_INTERP size/bounds mismatch")
+            }
+            if !bytes.equals_text(&image, seg_off, seg_off + interpreter.len, interpreter) || image[seg_off + interpreter.len] != 0 {
+                return common.fail("ELF PT_INTERP string mismatch")
+            }
+            interp_count += 1
+        }
+    }
+    if interp_count != 1 {
+        return common.fail("expected exactly 1 ELF PT_INTERP segment")
+    }
+    true
+}
+
+fn build_isolated(compiler: string, args: []string, work: string, expect_fail: bool, out_stderr: &mut string) -> bool {
+    var cmd := process.command(compiler, args)
+    process.set_cwd(&mut cmd, work)
+    process.set_env(&mut cmd, "PATH", "/no-external-tools")
+    process.set_timeout(&mut cmd, 60000)
+    res := process.exec(&cmd)
+    err_txt := process.stderr_text(&res)
+    out_stderr = err_txt
+    if text.find(err_txt, "VUID-") >= 0 || text.find(err_txt, "Validation Error") >= 0 {
+        return common.fail("graphics validation error: " + err_txt)
+    }
+    if expect_fail {
+        if !res.ok || res.timed_out || res.code <= 0 {
+            return common.fail("expected positive compile failure code")
+        }
+        return true
+    }
+    if !process.succeeded(&res) {
+        return common.fail("build failed: " + err_txt)
+    }
+    true
+}
+
+fn run_checked(program: string, args: []string, work: string, env_key: string, env_val: string, out_stdout: &mut string) -> bool {
+    var cmd := process.command(program, args)
+    process.set_cwd(&mut cmd, work)
+    if env_key.len > 0 { process.set_env(&mut cmd, env_key, env_val) }
+    process.set_timeout(&mut cmd, 60000)
+    res := process.exec(&cmd)
+    err_txt := process.stderr_text(&res)
+    if !process.succeeded(&res) {
+        return common.fail(program + " exited " + res.code.str() + ": " + process.stdout_text(&res) + err_txt)
+    }
+    if text.find(err_txt, "VUID-") >= 0 || text.find(err_txt, "Validation Error") >= 0 {
+        return common.fail("graphics validation error: " + err_txt)
+    }
+    out_stdout = process.stdout_text(&res)
+    true
+}
+
+fn check_webgpu(compiler: string, root: string, work: string) -> bool {
+    wasm_out := work + "/webgpu.wasm"
+    var stderr := ""
+    if !build_isolated(compiler, ["build", root + "/dogfood/webgpu/main.ddr", "-o", wasm_out, "--target", "wasm32"], work, false, &mut stderr) {
+        return false
+    }
+    script := "import assert from 'node:assert/strict';\n" +
+        "import { readFileSync } from 'node:fs';\n" +
+        "const mod = new WebAssembly.Module(readFileSync(process.argv[2]));\n" +
+        "let draws = 0;\n" +
+        "let instance;\n" +
+        "instance = new WebAssembly.Instance(mod, {\n" +
+        "  webgpu: {\n" +
+        "    draw(surface, p, count) {\n" +
+        "      assert.equal(surface, 1);\n" +
+        "      assert.equal(count, 3);\n" +
+        "      const expected = [\n" +
+        "        0, 0.72, 0, 1, 1, 0.69, 0.28, 1,\n" +
+        "        -0.72, -0.62, 0, 1, 0.16, 0.87, 0.74, 1,\n" +
+        "        0.72, -0.62, 0, 1, 0.40, 0.47, 1, 1,\n" +
+        "      ].map(Math.fround);\n" +
+        "      const actual = [...new Float32Array(instance.exports.memory.buffer, p, expected.length)];\n" +
+        "      assert.deepEqual(actual, expected);\n" +
+        "      draws++;\n" +
+        "    }\n" +
+        "  }\n" +
+        "});\n" +
+        "instance.exports.main();\n" +
+        "assert.equal(draws, 1);\n"
+    checker := work + "/check_webgpu.mjs"
+    if !sys.write_text(checker, script).ok { return common.fail("failed writing check_webgpu.mjs") }
+    var stdout := ""
+    run_checked("node", [checker, wasm_out], work, "", "", &mut stdout)
+}
+
+pub fn run_suite(compiler: string, root: string, live_graphics: bool) -> bool {
+    tmp := fs.temp_dir("dunder-hundmat-gfx-")
+    if !tmp.ok { return common.fail("temp_dir failed") }
+    work := tmp.value
+    defer { _ := fs.remove_all(work) }
+
+    triangle := root + "/dogfood/vulkan/triangle.ddr"
+    metal := root + "/dogfood/metal/triangle.ddr"
+    unexpected := work + "/unexpected"
+    var stderr := ""
+
+    if !build_isolated(compiler, ["build", triangle, "-o", unexpected, "--target", "arm64-macos"], work, true, &mut stderr) { return false }
+    if text.find(stderr, "requires the selected native platform") < 0 || sys.metadata(unexpected).ok {
+        return common.fail("Vulkan build on macOS was not cleanly rejected")
+    }
+    if !build_isolated(compiler, ["build", metal, "-o", unexpected, "--target", "arm64-linux"], work, true, &mut stderr) { return false }
+    if text.find(stderr, "requires the selected native platform") < 0 || sys.metadata(unexpected).ok {
+        return common.fail("Metal build on Linux was not cleanly rejected")
+    }
+
+    targets: []string = ["arm64-linux", "x86_64-linux"]
+    machines: []i32 = [183, 62]
+    interps: []string = ["/lib/ld-linux-aarch64.so.1", "/lib64/ld-linux-x86-64.so.2"]
+    for i in 0..targets.len {
+        out_path := work + "/" + targets[i]
+        if !build_isolated(compiler, ["build", triangle, "-o", out_path, "--target", targets[i]], work, false, &mut stderr) { return false }
+        first := sys.read_u8(out_path)
+        if !first.ok || !check_elf(&first.value, machines[i], interps[i]) { return false }
+        if !build_isolated(compiler, ["build", triangle, "-o", out_path, "--target", targets[i]], work, false, &mut stderr) { return false }
+        second := sys.read_u8(out_path)
+        if !second.ok || !bytes_equal(&first.value, &second.value) {
+            return common.fail("non-deterministic ELF output for " + targets[i])
+        }
+    }
+
+    mac_app := work + "/Triangle.app"
+    if !build_isolated(compiler, ["build", metal, "-o", mac_app, "--target", "arm64-macos", "--app"], work, false, &mut stderr) { return false }
+    plist := sys.read_text(mac_app + "/Contents/Info.plist")
+    if !plist.ok || text.find(plist.value, "<key>CFBundleExecutable</key>") < 0 || text.find(plist.value, "<string>Triangle</string>") < 0 {
+        return common.fail("Triangle.app Info.plist missing CFBundleExecutable=Triangle")
+    }
+    bin_meta := sys.metadata(mac_app + "/Contents/MacOS/Triangle")
+    if !bin_meta.ok || !bin_meta.is_file {
+        return common.fail("Triangle.app missing Contents/MacOS/Triangle executable")
+    }
+
+    if !check_webgpu(compiler, root, work) { return false }
+    print("PASS graphics: Vulkan ELF cross-builds, Metal .app bundle, and WebGPU Wasm module")
+
+    if live_graphics {
+        var stdout := ""
+        if process.host_os() == "macos" {
+            if !run_checked("/usr/bin/codesign", ["--verify", "--strict", mac_app], work, "", "", &mut stdout) { return false }
+            if !run_checked(mac_app + "/Contents/MacOS/Triangle", ["--frames", "3"], work, "MTL_DEBUG_LAYER", "1", &mut stdout) { return false }
+            if text.trim(stdout) != "triangle frames=3" { return common.fail("unexpected Triangle output: " + stdout) }
+
+            names: []string = ["main", "lifecycle", "events"]
+            expected: []string = ["atlas frames=3", "lifecycle cycles=3", "native event sequence ok"]
+            for i in 0..names.len {
+                out_bin := work + "/" + names[i]
+                if !build_isolated(compiler, ["build", root + "/dogfood/metal/" + names[i] + ".ddr", "-o", out_bin], work, false, &mut stderr) { return false }
+                var run_args: []string = []
+                if names[i] == "main" { run_args = ["--frames", "3"] }
+                if !run_checked(out_bin, run_args, work, "MTL_DEBUG_LAYER", "1", &mut stdout) { return false }
+                if text.trim(stdout) != expected[i] {
+                    return common.fail(names[i] + " output mismatch: " + stdout)
+                }
+            }
+            print("PASS live AppKit/Metal graphics execution")
+        } else {
+            names: []string = ["triangle", "main", "lifecycle", "pixels", "events"]
+            expected: []string = ["triangle frames=3", "atlas frames=3", "lifecycle cycles=3", "pixels ok", "SDL surface and events ok"]
+            for i in 0..names.len {
+                out_bin := work + "/" + names[i]
+                if !build_isolated(compiler, ["build", root + "/dogfood/vulkan/" + names[i] + ".ddr", "-o", out_bin], work, false, &mut stderr) { return false }
+                var run_args: []string = []
+                if names[i] == "triangle" || names[i] == "main" {
+                    run_args = ["--headless", "--frames", "3"]
+                }
+                var env_k := ""
+                var env_v := ""
+                if names[i] == "events" { env_k = "SDL_VIDEODRIVER"; env_v = "dummy" }
+                if !run_checked(out_bin, run_args, work, env_k, env_v, &mut stdout) { return false }
+                lines := text.split(text.trim(stdout), "\n")
+                if lines.len == 0 || lines[lines.len - 1] != expected[i] {
+                    return common.fail(names[i] + " output mismatch: " + stdout)
+                }
+            }
+            print("PASS live Vulkan graphics execution")
+        }
+    }
+    true
+}
+
+fn main() -> i32 {
+    cli := common.parse_cli(true)
+    if !cli.ok { _ := sys.eprint(cli.error); return 2 }
+    if !run_suite(cli.compiler, cli.root, cli.graphics) { return 1 }
+    0
+}

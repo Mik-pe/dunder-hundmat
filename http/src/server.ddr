@@ -2,6 +2,7 @@ capability network, filesystem
 
 import std.bytes as bytes
 import std.fs as fs
+import std.json as json
 import std.net as net
 import sys
 import .protocol as protocol
@@ -138,8 +139,15 @@ fn dispatch_request(
 
     if bytes.equals_text(&rx_slab, req.path_start, req.path_end, "/stats") {
         if is_get || is_head {
-            body := "{\"requests\":" + requests_served.str() + ",\"active_connections\":" + i64(active_conns).str() + ",\"uptime_ms\":" + uptime_ms.str() + "}\n"
-            response.write_text(&mut out, 200, "application/json; charset=utf-8", body, is_head, req.keep_alive)
+            var jbuf: []u8 = []
+            jbuf.reserve(96)
+            var first := json.begin_obj(&mut jbuf)
+            json.field_i64(&mut jbuf, &mut first, "requests", requests_served)
+            json.field_i64(&mut jbuf, &mut first, "active_connections", i64(active_conns))
+            json.field_i64(&mut jbuf, &mut first, "uptime_ms", uptime_ms)
+            json.end_obj(&mut jbuf)
+            jbuf.push(b'\n')
+            response.write_slice(&mut out, 200, "application/json; charset=utf-8", &jbuf, 0, jbuf.len, is_head, req.keep_alive)
         } else {
             response.write_error(&mut out, 405, false, req.keep_alive)
         }

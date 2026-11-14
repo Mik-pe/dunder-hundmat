@@ -60,7 +60,7 @@ Projektet provar punktseparerade modulnamn utan citattecken, mutable borrows,
 structreturer med dynamiska fält, UTF-8-bytebuffertar, map, strängsortering,
 programargument, fil-I/O och separata stdout/stderr. Parserns och rapportens
 taggade tester finns nära funktionerna. Kompilatorns integrationstest
-[`tools/test-tabell.py`](../tools/test-tabell.py) jämför dessutom riktiga CLI-körningar med en oberoende referens.
+[`tools/test_tabell.ddr`](../tools/test_tabell.ddr) jämför dessutom riktiga CLI-körningar med en oberoende referens.
 
 Tabell byggs också av den självbyggda Dunder-kompilatorn.
 Stage 3 kompilerar projektet till ARM64/Linux; binären körs under QEMU och
