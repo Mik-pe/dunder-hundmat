@@ -1,0 +1,101 @@
+capability network, filesystem
+
+import std.bytes as bytes
+import std.fs as fs
+import std.net as net
+import sys
+import .protocol as protocol
+import .response as response
+import .static as static_files
+import .server as server
+
+fn to_bytes(text: string) -> []u8 {
+    var b: []u8 = []
+    bytes.append_utf8(&mut b, text)
+    b
+}
+
+@test
+fn protocol_parses_requests_keepalive_and_pipelining() {
+    raw := to_bytes("GET /sub/hello.txt?v=1 HTTP/1.1\r\nHost: localhost\r\n\r\nPOST /echo HTTP/1.0\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\nhello")
+    r1 := protocol.parse_request(&raw, 0, raw.len)
+    assert(r1.complete && r1.status_code == 0)
+    assert(r1.method == protocol.method_get())
+    assert(bytes.equals_text(&raw, r1.path_start, r1.path_end, "/sub/hello.txt"))
+    assert(bytes.equals_text(&raw, r1.query_start, r1.query_end, "v=1"))
+    assert(r1.keep_alive)
+    assert(r1.consumed > 0)
+
+    r2 := protocol.parse_request(&raw, r1.consumed, raw.len)
+    assert(r2.complete && r2.status_code == 0)
+    assert(r2.method == protocol.method_post())
+    assert(bytes.equals_text(&raw, r2.path_start, r2.path_end, "/echo"))
+    assert(bytes.equals_text(&raw, r2.body_start, r2.body_end, "hello"))
+    assert(r2.keep_alive)
+    assert(r1.consumed + r2.consumed == raw.len)
+}
+
+@test
+fn protocol_handles_incomplete_and_rejects_invalid_requests() {
+    partial := to_bytes("GET /healthz HTTP/1.1\r\nHost: x\r\n")
+    r_inc := protocol.parse_request(&partial, 0, partial.len)
+    assert(!r_inc.complete)
+
+    bad_ver := to_bytes("GET / HTTP/2.0\r\n\r\n")
+    assert(protocol.parse_request(&bad_ver, 0, bad_ver.len).status_code == 400)
+
+    bad_method := to_bytes("DELETE /item HTTP/1.1\r\n\r\n")
+    assert(protocol.parse_request(&bad_method, 0, bad_method.len).status_code == 501)
+
+    te := to_bytes("POST /echo HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n")
+    assert(protocol.parse_request(&te, 0, te.len).status_code == 501)
+
+    huge := to_bytes("POST /echo HTTP/1.1\r\nContent-Length: 99999999\r\n\r\n")
+    assert(protocol.parse_request(&huge, 0, huge.len).status_code == 413)
+
+    smuggle := to_bytes("POST /echo HTTP/1.1\r\nContent-Length: 4\r\nContent-Length: 5\r\n\r\n12345")
+    assert(protocol.parse_request(&smuggle, 0, smuggle.len).status_code == 400)
+}
+
+@test
+fn response_head_and_static_confinement() {
+    var out: []u8 = []
+    response.write_text(&mut out, 200, "text/plain; charset=utf-8", "ok\n", true, true)
+    assert(bytes.equals_text(&out, 0, out.len, "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: keep-alive\r\nServer: dunder-http\r\n\r\n"))
+
+    root := ".dunder-http-static-test-" + sys.pid().str()
+    assert(sys.mkdir(root).ok)
+    defer { unused_r := sys.remove_dir(root) }
+    idx := root + "/index.html"
+    assert(sys.write_text(idx, "<h1>hi</h1>").ok)
+    defer { unused_i := sys.remove_file(idx) }
+
+    dir := fs.grant_dir(root)
+
+    out.clear()
+    req_root := to_bytes("/")
+    static_files.serve(&dir, &req_root, 0, req_root.len, false, true, &mut out)
+    assert(bytes.equals_text(&out, 0, out.len, "HTTP/1.1 200 OK\r\nContent-Length: 11\r\nContent-Type: text/html; charset=utf-8\r\nConnection: keep-alive\r\nServer: dunder-http\r\n\r\n<h1>hi</h1>"))
+
+    out.clear()
+    req_trav := to_bytes("/../etc/passwd")
+    static_files.serve(&dir, &req_trav, 0, req_trav.len, false, false, &mut out)
+    assert(bytes.equals_text(&out, 0, 17, "HTTP/1.1 404 Not "))
+
+    // Verify server.serve reports AddressInUse (48) cleanly when port is already bound.
+    lres := net.listen(net.loopback(), 0, 8)
+    assert(lres.ok)
+    var occupied := lres.listener
+    defer { unused_l := net.close_listener(&mut occupied) }
+    busy := server.serve(server.ServerConfig {
+        host: net.loopback(),
+        port: net.local_port(&occupied),
+        has_doc_root: false,
+        doc_root: fs.grant_dir(""),
+        idle_timeout_ms: 1000,
+        max_requests: 1,
+        announce_listening: false,
+    })
+    assert(!busy.ok && busy.error == 48)
+    _ := server.max_conns()
+}

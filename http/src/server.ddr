@@ -1,0 +1,507 @@
+capability network, filesystem
+
+import std.bytes as bytes
+import std.fs as fs
+import std.net as net
+import sys
+import .protocol as protocol
+import .response as response
+import .static as static_files
+
+pub fn max_conns() -> i32 { 128 }
+pub fn rx_stride() -> i32 { 131072 }
+
+pub struct ServerConfig {
+    host: i64,
+    port: i32,
+    has_doc_root: bool,
+    doc_root: fs.ReadDir,
+    idle_timeout_ms: i64,
+    max_requests: i64,
+    announce_listening: bool,
+}
+
+pub struct ServerStats {
+    ok: bool,
+    error: i32,
+    port: i32,
+    requests_served: i64,
+}
+
+struct ConnState {
+    active: []i32,
+    rx_pos: []i32,
+    rx_len: []i32,
+    tx_off: []i32,
+    tx_end: []i32,
+    close_after_tx: []i32,
+    last_active_ms: []i64,
+    active_conns: i32,
+    pending_tx: i32,
+    requests_served: i64,
+    start_ms: i64,
+}
+
+fn close_conn(
+    slot: i32,
+    state: &mut ConnState,
+    streams: &mut net.StreamSet,
+    tx_arena: &mut []u8,
+) {
+    if state.active[slot] == 0 { return }
+    if state.tx_off[slot] < state.tx_end[slot] {
+        state.pending_tx -= 1
+    }
+    state.active[slot] = 0
+    state.rx_pos[slot] = 0
+    state.rx_len[slot] = 0
+    state.tx_off[slot] = 0
+    state.tx_end[slot] = 0
+    state.close_after_tx[slot] = 0
+    state.active_conns -= 1
+    unused := net.set_close(&mut streams, slot)
+    if state.pending_tx == 0 && tx_arena.len > 0 {
+        tx_arena.clear()
+    }
+}
+
+fn ensure_slot_capacity(slot: i32, state: &mut ConnState, rx_slab: &mut []u8) {
+    while state.active.len <= slot {
+        state.active.push(0)
+        state.rx_pos.push(0)
+        state.rx_len.push(0)
+        state.tx_off.push(0)
+        state.tx_end.push(0)
+        state.close_after_tx.push(0)
+        state.last_active_ms.push(0)
+    }
+    need := (slot + 1) * rx_stride()
+    if rx_slab.len < need {
+        rx_slab.reserve(need)
+        while rx_slab.len < need { rx_slab.push(0) }
+    }
+}
+
+fn send_or_queue(
+    slot: i32,
+    keep_alive: bool,
+    tx_scratch: &[]u8,
+    streams: &net.StreamSet,
+    state: &mut ConnState,
+    tx_arena: &mut []u8,
+) -> bool {
+    wr := net.set_write_range(&streams, slot, &tx_scratch, 0, tx_scratch.len)
+    if wr.ok {
+        sent := i32(wr.count)
+        if sent == tx_scratch.len { return true }
+        off := tx_arena.len
+        bytes.extend_range(&mut tx_arena, &tx_scratch, sent, tx_scratch.len)
+        state.tx_off[slot] = off
+        state.tx_end[slot] = tx_arena.len
+        state.pending_tx += 1
+        if !keep_alive { state.close_after_tx[slot] = 1 }
+        return true
+    }
+    if wr.would_block {
+        off := tx_arena.len
+        bytes.extend(&mut tx_arena, &tx_scratch)
+        state.tx_off[slot] = off
+        state.tx_end[slot] = tx_arena.len
+        state.pending_tx += 1
+        if !keep_alive { state.close_after_tx[slot] = 1 }
+        return true
+    }
+    false
+}
+
+fn dispatch_request(
+    config: &ServerConfig,
+    req: &protocol.ParsedRequest,
+    rx_slab: &[]u8,
+    requests_served: i64,
+    active_conns: i32,
+    uptime_ms: i64,
+    out: &mut []u8,
+) {
+    is_get := req.method == protocol.method_get()
+    is_head := req.method == protocol.method_head()
+    is_post := req.method == protocol.method_post()
+
+    if bytes.equals_text(&rx_slab, req.path_start, req.path_end, "/healthz") {
+        if is_get || is_head {
+            response.write_text(&mut out, 200, "text/plain; charset=utf-8", "ok\n", is_head, req.keep_alive)
+        } else {
+            response.write_error(&mut out, 405, false, req.keep_alive)
+        }
+        return
+    }
+
+    if bytes.equals_text(&rx_slab, req.path_start, req.path_end, "/stats") {
+        if is_get || is_head {
+            body := "{\"requests\":" + requests_served.str() + ",\"active_connections\":" + i64(active_conns).str() + ",\"uptime_ms\":" + uptime_ms.str() + "}\n"
+            response.write_text(&mut out, 200, "application/json; charset=utf-8", body, is_head, req.keep_alive)
+        } else {
+            response.write_error(&mut out, 405, false, req.keep_alive)
+        }
+        return
+    }
+
+    if bytes.equals_text(&rx_slab, req.path_start, req.path_end, "/echo") {
+        if is_post {
+            var ct := "application/octet-stream"
+            if req.ct_end > req.ct_start {
+                decoded := bytes.decode_range(&rx_slab, req.ct_start, req.ct_end)
+                if decoded.ok { ct = decoded.value }
+            }
+            response.write_slice(&mut out, 200, ct, &rx_slab, req.body_start, req.body_end, false, req.keep_alive)
+        } else {
+            response.write_error(&mut out, 405, is_head, req.keep_alive)
+        }
+        return
+    }
+
+    if (is_get || is_head) && config.has_doc_root {
+        static_files.serve(&config.doc_root, &rx_slab, req.path_start, req.path_end, is_head, req.keep_alive, &mut out)
+        return
+    }
+
+    response.write_error(&mut out, 404, is_head, req.keep_alive)
+}
+
+fn process_rx(
+    slot: i32,
+    now: i64,
+    config: &ServerConfig,
+    doc_root: &fs.ReadDir,
+    rx_slab: &[]u8,
+    tx_scratch: &mut []u8,
+    tx_arena: &mut []u8,
+    streams: &mut net.StreamSet,
+    state: &mut ConnState,
+) {
+    _ := doc_root
+    if state.active[slot] == 0 || state.tx_off[slot] < state.tx_end[slot] { return }
+    slot_base := slot * rx_stride()
+
+    for _ in 0..16 {
+        if state.rx_pos[slot] >= state.rx_len[slot] {
+            state.rx_pos[slot] = 0
+            state.rx_len[slot] = 0
+            break
+        }
+        start := slot_base + state.rx_pos[slot]
+        end := slot_base + state.rx_len[slot]
+        req := protocol.parse_request(&rx_slab, start, end)
+        if !req.complete { break }
+
+        tx_scratch.clear()
+        if req.status_code != 0 {
+            response.write_error(&mut tx_scratch, req.status_code, false, false)
+            sent_ok := send_or_queue(slot, false, &tx_scratch, &streams, &mut state, &mut tx_arena)
+            if !sent_ok || state.tx_off[slot] >= state.tx_end[slot] {
+                close_conn(slot, &mut state, &mut streams, &mut tx_arena)
+            }
+            break
+        }
+
+        state.requests_served += 1
+        state.rx_pos[slot] += req.consumed
+        if state.rx_pos[slot] >= state.rx_len[slot] {
+            state.rx_pos[slot] = 0
+            state.rx_len[slot] = 0
+        }
+
+        uptime := now - state.start_ms
+        dispatch_request(&config, &req, &rx_slab, state.requests_served, state.active_conns, uptime, &mut tx_scratch)
+        sent_ok := send_or_queue(slot, req.keep_alive, &tx_scratch, &streams, &mut state, &mut tx_arena)
+        if !sent_ok {
+            close_conn(slot, &mut state, &mut streams, &mut tx_arena)
+            break
+        }
+        if state.tx_off[slot] < state.tx_end[slot] {
+            break
+        }
+        if !req.keep_alive {
+            close_conn(slot, &mut state, &mut streams, &mut tx_arena)
+            break
+        }
+        if config.max_requests > 0 && state.requests_served >= config.max_requests {
+            break
+        }
+    }
+}
+
+// Returns: 1=ok, 2=buffer full (send 413), 3=peer EOF (drain rx then close), 0=error (close immediately).
+fn read_slot(
+    slot: i32,
+    now: i64,
+    streams: &net.StreamSet,
+    io_scratch: &mut []u8,
+    rx_slab: &mut []u8,
+    state: &mut ConnState,
+) -> i32 {
+    slot_base := slot * rx_stride()
+    var saw_eof := false
+
+    for _ in 0..4 {
+        var used := state.rx_len[slot]
+        if state.rx_pos[slot] > 0 && (state.rx_pos[slot] == used || rx_stride() - used < 4096) {
+            if state.rx_pos[slot] >= used {
+                state.rx_pos[slot] = 0
+                state.rx_len[slot] = 0
+                used = 0
+            } else {
+                rem := used - state.rx_pos[slot]
+                pos := state.rx_pos[slot]
+                for k in 0..rem {
+                    rx_slab[slot_base + k] = rx_slab[slot_base + pos + k]
+                }
+                state.rx_pos[slot] = 0
+                state.rx_len[slot] = rem
+                used = rem
+            }
+        }
+
+        avail := rx_stride() - used
+        if avail <= 0 { return 2 }
+        var chunk := 32768
+        if avail < chunk { chunk = avail }
+
+        io_scratch.clear()
+        rr := net.set_read_append(&streams, slot, &mut io_scratch, chunk)
+        if !rr.ok {
+            if rr.would_block { break }
+            return 0
+        }
+        if rr.eof {
+            saw_eof = true
+            break
+        }
+        for i in 0..io_scratch.len {
+            rx_slab[slot_base + used + i] = io_scratch[i]
+        }
+        state.rx_len[slot] = used + io_scratch.len
+        state.last_active_ms[slot] = now
+        if io_scratch.len < chunk { break }
+    }
+
+    if saw_eof { return 3 }
+    1
+}
+
+fn drain_tx(
+    slot: i32,
+    now: i64,
+    config: &ServerConfig,
+    doc_root: &fs.ReadDir,
+    rx_slab: &[]u8,
+    tx_scratch: &mut []u8,
+    tx_arena: &mut []u8,
+    streams: &mut net.StreamSet,
+    state: &mut ConnState,
+) {
+    while state.tx_off[slot] < state.tx_end[slot] {
+        rem := state.tx_end[slot] - state.tx_off[slot]
+        var chunk := 65536
+        if rem < chunk { chunk = rem }
+        wr := net.set_write_range(&streams, slot, &tx_arena, state.tx_off[slot], chunk)
+        if !wr.ok {
+            if wr.would_block { break }
+            close_conn(slot, &mut state, &mut streams, &mut tx_arena)
+            return
+        }
+        if wr.count == 0 { break }
+        state.tx_off[slot] += i32(wr.count)
+        state.last_active_ms[slot] = now
+    }
+
+    if state.tx_off[slot] >= state.tx_end[slot] {
+        state.tx_off[slot] = 0
+        state.tx_end[slot] = 0
+        state.pending_tx -= 1
+        if state.pending_tx == 0 && tx_arena.len > 0 { tx_arena.clear() }
+        if state.close_after_tx[slot] != 0 {
+            close_conn(slot, &mut state, &mut streams, &mut tx_arena)
+            return
+        }
+        if state.rx_pos[slot] < state.rx_len[slot] {
+            process_rx(slot, now, &config, &doc_root, &rx_slab, &mut tx_scratch, &mut tx_arena, &mut streams, &mut state)
+        }
+    }
+}
+
+fn accept_pending(
+    listener: &net.TcpListener,
+    now: i64,
+    busy_reply: &[]u8,
+    streams: &mut net.StreamSet,
+    rx_slab: &mut []u8,
+    state: &mut ConnState,
+) {
+    for _ in 0..32 {
+        ares := net.accept(&listener)
+        if !ares.ok {
+            if ares.would_block { break }
+            break
+        }
+        var client := ares.stream
+        if state.active_conns >= max_conns() {
+            unused_w := net.write_range(&client, &busy_reply, 0, busy_reply.len)
+            unused_c := net.close(&mut client)
+            continue
+        }
+        unused_nb := net.set_nonblocking(&client, true)
+        unused_nd := net.set_nodelay(&client, true)
+        slot := net.set_insert(&mut streams, &mut client)
+        ensure_slot_capacity(slot, &mut state, &mut rx_slab)
+        state.active[slot] = 1
+        state.rx_pos[slot] = 0
+        state.rx_len[slot] = 0
+        state.tx_off[slot] = 0
+        state.tx_end[slot] = 0
+        state.close_after_tx[slot] = 0
+        state.last_active_ms[slot] = now
+        state.active_conns += 1
+    }
+}
+
+pub fn serve(config: ServerConfig) -> ServerStats {
+    lres := net.listen(config.host, config.port, 128)
+    if !lres.ok {
+        return ServerStats { ok: false, error: lres.error, port: 0, requests_served: 0 }
+    }
+    var listener := lres.listener
+    defer { unused_l := net.close_listener(&mut listener) }
+
+    st_nb := net.set_listener_nonblocking(&listener, true)
+    if !st_nb.ok {
+        return ServerStats { ok: false, error: st_nb.error, port: 0, requests_served: 0 }
+    }
+    bound_port := net.local_port(&listener)
+    if config.announce_listening {
+        print("LISTENING " + bound_port.str())
+    }
+
+    var streams := net.stream_set()
+    defer { net.set_close_all(&mut streams) }
+    var pollset := net.poll_set()
+    var poll_slots: []i32 = []
+
+    var rx_slab: []u8 = []
+    var tx_arena: []u8 = []
+    var tx_scratch: []u8 = []
+    var io_scratch: []u8 = []
+    var busy_reply: []u8 = []
+    response.write_error(&mut busy_reply, 503, false, false)
+
+    doc_root := config.doc_root
+    var state := ConnState {
+        active: [],
+        rx_pos: [],
+        rx_len: [],
+        tx_off: [],
+        tx_end: [],
+        close_after_tx: [],
+        last_active_ms: [],
+        active_conns: 0,
+        pending_tx: 0,
+        requests_served: 0,
+        start_ms: sys.now_ms(),
+    }
+
+    for _ in 0..1000000000 {
+        if config.max_requests > 0 && state.requests_served >= config.max_requests && state.pending_tx == 0 {
+            break
+        }
+
+        net.poll_clear(&mut pollset)
+        poll_slots.clear()
+        net.poll_add(&mut pollset, net.listener_fd(&listener), net.poll_in())
+        poll_slots.push(-1)
+
+        for slot in 0..state.active.len {
+            if state.active[slot] != 0 {
+                var want := net.poll_in()
+                if state.tx_off[slot] < state.tx_end[slot] {
+                    want = net.poll_out()
+                }
+                net.poll_add(&mut pollset, net.set_fd(&streams, slot), want)
+                poll_slots.push(slot)
+            }
+        }
+
+        var timeout_ms := -1
+        if config.idle_timeout_ms > 0 && state.active_conns > 0 {
+            var q := i32(config.idle_timeout_ms / 4)
+            if q > 200 { q = 200 }
+            if q < 10 { q = 10 }
+            timeout_ms = q
+        }
+
+        pr := net.poll(&mut pollset, timeout_ms)
+        if !pr.ok {
+            if pr.error == 4 { continue }
+            return ServerStats { ok: false, error: pr.error, port: bound_port, requests_served: state.requests_served }
+        }
+
+        now := sys.now_ms()
+        if pollset.revents[0].bit_and(net.poll_in()) != 0 {
+            accept_pending(&listener, now, &busy_reply, &mut streams, &mut rx_slab, &mut state)
+        }
+
+        for p_idx in 1..poll_slots.len {
+            rev := pollset.revents[p_idx]
+            if rev == 0 { continue }
+            slot := poll_slots[p_idx]
+            if state.active[slot] == 0 { continue }
+
+            if rev.bit_and(net.poll_err().bit_or(net.poll_nval())) != 0 {
+                close_conn(slot, &mut state, &mut streams, &mut tx_arena)
+                continue
+            }
+
+            if state.tx_off[slot] < state.tx_end[slot] {
+                if rev.bit_and(net.poll_out()) != 0 {
+                    drain_tx(slot, now, &config, &doc_root, &rx_slab, &mut tx_scratch, &mut tx_arena, &mut streams, &mut state)
+                }
+                if rev.bit_and(net.poll_hup()) != 0 && state.active[slot] != 0 && state.tx_off[slot] >= state.tx_end[slot] {
+                    close_conn(slot, &mut state, &mut streams, &mut tx_arena)
+                }
+                continue
+            }
+
+            if rev.bit_and(net.poll_in().bit_or(net.poll_hup())) != 0 {
+                rstatus := read_slot(slot, now, &streams, &mut io_scratch, &mut rx_slab, &mut state)
+                if rstatus == 0 {
+                    close_conn(slot, &mut state, &mut streams, &mut tx_arena)
+                    continue
+                }
+                if rstatus == 2 {
+                    tx_scratch.clear()
+                    response.write_error(&mut tx_scratch, 413, false, false)
+                    unused_s := send_or_queue(slot, false, &tx_scratch, &streams, &mut state, &mut tx_arena)
+                    if state.tx_off[slot] >= state.tx_end[slot] {
+                        close_conn(slot, &mut state, &mut streams, &mut tx_arena)
+                    }
+                    continue
+                }
+                process_rx(slot, now, &config, &doc_root, &rx_slab, &mut tx_scratch, &mut tx_arena, &mut streams, &mut state)
+                if state.active[slot] != 0 && state.tx_off[slot] >= state.tx_end[slot] {
+                    if rstatus == 3 || rev.bit_and(net.poll_hup()) != 0 {
+                        close_conn(slot, &mut state, &mut streams, &mut tx_arena)
+                    }
+                }
+            }
+        }
+
+        if config.idle_timeout_ms > 0 {
+            for slot in 0..state.active.len {
+                if state.active[slot] != 0 && (now - state.last_active_ms[slot]) >= config.idle_timeout_ms {
+                    close_conn(slot, &mut state, &mut streams, &mut tx_arena)
+                }
+            }
+        }
+    }
+
+    ServerStats { ok: true, error: 0, port: bound_port, requests_served: state.requests_served }
+}

@@ -1,0 +1,220 @@
+import std.bytes as bytes
+
+pub fn method_none() -> i32 { 0 }
+pub fn method_get() -> i32 { 1 }
+pub fn method_head() -> i32 { 2 }
+pub fn method_post() -> i32 { 3 }
+
+pub fn max_header_bytes() -> i32 { 0x4000 }
+pub fn max_headers() -> i32 { 64 }
+pub fn max_body_bytes() -> i32 { 0x10000 }
+
+pub struct ParsedRequest {
+    complete: bool,
+    status_code: i32,
+    method: i32,
+    path_start: i32,
+    path_end: i32,
+    query_start: i32,
+    query_end: i32,
+    ct_start: i32,
+    ct_end: i32,
+    body_start: i32,
+    body_end: i32,
+    keep_alive: bool,
+    consumed: i32,
+}
+
+fn incomplete() -> ParsedRequest {
+    ParsedRequest {
+        complete: false,
+        status_code: 0,
+        method: 0,
+        path_start: 0,
+        path_end: 0,
+        query_start: 0,
+        query_end: 0,
+        ct_start: 0,
+        ct_end: 0,
+        body_start: 0,
+        body_end: 0,
+        keep_alive: false,
+        consumed: 0,
+    }
+}
+
+fn error_result(code: i32) -> ParsedRequest {
+    ParsedRequest {
+        complete: true,
+        status_code: code,
+        method: 0,
+        path_start: 0,
+        path_end: 0,
+        query_start: 0,
+        query_end: 0,
+        ct_start: 0,
+        ct_end: 0,
+        body_start: 0,
+        body_end: 0,
+        keep_alive: false,
+        consumed: 0,
+    }
+}
+
+fn is_token_byte(b: u8) -> bool {
+    if b >= b'a' && b <= b'z' { return true }
+    if b >= b'A' && b <= b'Z' { return true }
+    if b >= b'0' && b <= b'9' { return true }
+    b == b'!' || b == b'#' || b == b'$' || b == b'%' || b == b'&' || b == 0x27 || b == b'*' || b == b'+' || b == b'-' || b == b'.' || b == b'^' || b == b'_' || b == b'`' || b == b'|' || b == b'~'
+}
+
+fn skip_ows_left(buf: &[]u8, start: i32, end: i32) -> i32 {
+    var i := start
+    while i < end && (buf[i] == b' ' || buf[i] == b'\t') { i += 1 }
+    i
+}
+
+fn skip_ows_right(buf: &[]u8, start: i32, end: i32) -> i32 {
+    var i := end
+    while i > start && (buf[i - 1] == b' ' || buf[i - 1] == b'\t') { i -= 1 }
+    i
+}
+
+// Parse strict non-negative ASCII decimal bounded by max_val.
+// Returns >= 0 on success, -1 for bad spelling, -2 for overflow.
+fn parse_decimal_slice(buf: &[]u8, start: i32, end: i32, max_val: i64) -> i64 {
+    if start >= end { return -1 }
+    var value: i64 = 0
+    for i in start..end {
+        b := buf[i]
+        if b < b'0' || b > b'9' { return -1 }
+        d := i64(b - b'0')
+        if value > (max_val - d) / 10 { return -2 }
+        value = value * 10 + d
+    }
+    value
+}
+
+pub fn parse_request(buf: &[]u8, start: i32, end: i32) -> ParsedRequest {
+    assert(start >= 0 && start <= end && end <= buf.len)
+    if start == end { return incomplete() }
+
+    header_end := bytes.find_double_crlf(&buf, start, end)
+    if header_end < 0 {
+        if end - start > max_header_bytes() { return error_result(431) }
+        return incomplete()
+    }
+    if header_end - start > max_header_bytes() { return error_result(431) }
+
+    line_end := bytes.find_crlf(&buf, start, header_end + 2)
+    if line_end < 0 { return error_result(400) }
+
+    sp1 := bytes.find_byte(&buf, start, line_end, b' ')
+    if sp1 <= start { return error_result(400) }
+    for i in start..sp1 {
+        if !is_token_byte(buf[i]) { return error_result(400) }
+    }
+    var method := 0
+    if bytes.equals_text(&buf, start, sp1, "GET") { method = method_get() }
+    else if bytes.equals_text(&buf, start, sp1, "HEAD") { method = method_head() }
+    else if bytes.equals_text(&buf, start, sp1, "POST") { method = method_post() }
+
+    sp2 := bytes.find_byte(&buf, sp1 + 1, line_end, b' ')
+    if sp2 <= sp1 + 1 { return error_result(400) }
+    target_start := sp1 + 1
+    target_end := sp2
+    if buf[target_start] != b'/' { return error_result(400) }
+    for i in target_start..target_end {
+        b := buf[i]
+        if b <= 0x20 || b == 0x7f { return error_result(400) }
+    }
+
+    var path_end := target_end
+    var query_start := target_end
+    qmark := bytes.find_byte(&buf, target_start, target_end, b'?')
+    if qmark >= 0 {
+        path_end = qmark
+        query_start = qmark + 1
+    }
+
+    ver_start := sp2 + 1
+    var is_http11 := false
+    if bytes.equals_text(&buf, ver_start, line_end, "HTTP/1.1") { is_http11 = true }
+    else if !bytes.equals_text(&buf, ver_start, line_end, "HTTP/1.0") {
+        return error_result(400)
+    }
+
+    var keep_alive := is_http11
+    var saw_close := false
+    var saw_keep_alive := false
+    var saw_content_length := false
+    var content_length: i64 = 0
+    var ct_start := 0
+    var ct_end := 0
+    var header_count := 0
+
+    var cursor := line_end + 2
+    while cursor < header_end {
+        next_crlf := bytes.find_crlf(&buf, cursor, header_end + 2)
+        if next_crlf < 0 { return error_result(400) }
+        header_count += 1
+        if header_count > max_headers() { return error_result(431) }
+
+        colon := bytes.find_byte(&buf, cursor, next_crlf, b':')
+        if colon <= cursor { return error_result(400) }
+        for i in cursor..colon {
+            if !is_token_byte(buf[i]) { return error_result(400) }
+        }
+        val_start := skip_ows_left(&buf, colon + 1, next_crlf)
+        val_end := skip_ows_right(&buf, val_start, next_crlf)
+
+        if bytes.equals_ascii_ci(&buf, cursor, colon, "transfer-encoding") {
+            return error_result(501)
+        } else if bytes.equals_ascii_ci(&buf, cursor, colon, "content-length") {
+            parsed_len := parse_decimal_slice(&buf, val_start, val_end, i64(max_body_bytes()))
+            if parsed_len == -2 { return error_result(413) }
+            if parsed_len < 0 { return error_result(400) }
+            if saw_content_length && parsed_len != content_length { return error_result(400) }
+            saw_content_length = true
+            content_length = parsed_len
+        } else if bytes.equals_ascii_ci(&buf, cursor, colon, "connection") {
+            if bytes.equals_ascii_ci(&buf, val_start, val_end, "close") {
+                saw_close = true
+            } else if bytes.equals_ascii_ci(&buf, val_start, val_end, "keep-alive") {
+                saw_keep_alive = true
+            }
+        } else if bytes.equals_ascii_ci(&buf, cursor, colon, "content-type") {
+            ct_start = val_start
+            ct_end = val_end
+        }
+        cursor = next_crlf + 2
+    }
+
+    if saw_close { keep_alive = false }
+    else if saw_keep_alive { keep_alive = true }
+
+    if method == 0 { return error_result(501) }
+
+    body_start := header_end + 4
+    body_len := i32(content_length)
+    avail := end - body_start
+    if avail < body_len { return incomplete() }
+
+    body_end := body_start + body_len
+    consumed := body_end - start
+    ParsedRequest {
+        complete: true,
+        status_code: 0,
+        method: method,
+        path_start: target_start,
+        path_end: path_end,
+        query_start: query_start,
+        query_end: target_end,
+        ct_start: ct_start,
+        ct_end: ct_end,
+        body_start: body_start,
+        body_end: body_end,
+        keep_alive: keep_alive,
+        consumed: consumed,
+    }
+}

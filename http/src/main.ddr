@@ -1,0 +1,90 @@
+capability network, filesystem
+
+import std.fs as fs
+import std.net as net
+import std.parse as parse
+import sys
+import .server as server
+
+fn print_usage() {
+    print("usage: dunder-http [--host 127.0.0.1|0.0.0.0] [--port PORT] [--dir ROOT] [--idle-ms MS] [--max-requests N]")
+}
+
+fn fail(msg: string, code: i32) -> i32 {
+    unused := sys.eprint("dunder-http: " + msg)
+    code
+}
+
+fn main() -> i32 {
+    var host := net.loopback()
+    var port := 8080
+    var dir_path := ""
+    var idle_ms: i64 = 5000
+    var max_requests: i64 = 0
+
+    argc := sys.arg_count()
+    var i := 1
+    while i < argc {
+        arg := sys.arg(i)
+        if arg == "--help" || arg == "-h" {
+            print_usage()
+            return 0
+        } else if arg == "--host" {
+            if i + 1 >= argc { return fail("--host requires a value", 2) }
+            h := sys.arg(i + 1)
+            if h == "127.0.0.1" { host = net.loopback() }
+            else if h == "0.0.0.0" { host = net.any_addr() }
+            else { return fail("unsupported host " + h, 2) }
+            i += 2
+        } else if arg == "--port" {
+            if i + 1 >= argc { return fail("--port requires a value", 2) }
+            p := parse.integer(sys.arg(i + 1))
+            if !p.ok || p.value < 0 || p.value > 65535 { return fail("invalid port", 2) }
+            port = i32(p.value)
+            i += 2
+        } else if arg == "--dir" {
+            if i + 1 >= argc { return fail("--dir requires a path", 2) }
+            dir_path = sys.arg(i + 1)
+            if dir_path.len == 0 { return fail("empty --dir path", 2) }
+            i += 2
+        } else if arg == "--idle-ms" {
+            if i + 1 >= argc { return fail("--idle-ms requires milliseconds", 2) }
+            ms := parse.integer(sys.arg(i + 1))
+            if !ms.ok || ms.value < 0 { return fail("invalid --idle-ms", 2) }
+            idle_ms = ms.value
+            i += 2
+        } else if arg == "--max-requests" {
+            if i + 1 >= argc { return fail("--max-requests requires count", 2) }
+            mr := parse.integer(sys.arg(i + 1))
+            if !mr.ok || mr.value < 0 { return fail("invalid --max-requests", 2) }
+            max_requests = mr.value
+            i += 2
+        } else {
+            return fail("unknown option " + arg, 2)
+        }
+    }
+
+    var has_doc_root := false
+    if dir_path.len > 0 {
+        info := sys.metadata(dir_path)
+        if !info.ok || !info.is_dir {
+            return fail("--dir is not an existing directory: " + dir_path, 1)
+        }
+        has_doc_root = true
+    }
+
+    cfg := server.ServerConfig {
+        host: host,
+        port: port,
+        has_doc_root: has_doc_root,
+        doc_root: fs.grant_dir(dir_path),
+        idle_timeout_ms: idle_ms,
+        max_requests: max_requests,
+        announce_listening: true,
+    }
+    st := server.serve(cfg)
+    if !st.ok {
+        return fail(sys.error_message(st.error), 1)
+    }
+    0
+}

@@ -1,0 +1,52 @@
+import std.bytes as bytes
+
+pub fn reason_phrase(status: i32) -> string {
+    if status == 200 { return "OK" }
+    if status == 400 { return "Bad Request" }
+    if status == 403 { return "Forbidden" }
+    if status == 404 { return "Not Found" }
+    if status == 405 { return "Method Not Allowed" }
+    if status == 413 { return "Payload Too Large" }
+    if status == 431 { return "Request Header Fields Too Large" }
+    if status == 500 { return "Internal Server Error" }
+    if status == 501 { return "Not Implemented" }
+    if status == 503 { return "Service Unavailable" }
+    "Error"
+}
+
+pub fn write_headers(out: &mut []u8, status: i32, content_type: string, body_len: i32, keep_alive: bool) {
+    bytes.append_utf8(&mut out, "HTTP/1.1 ")
+    bytes.append_decimal(&mut out, i64(status))
+    out.push(b' ')
+    bytes.append_utf8(&mut out, reason_phrase(status))
+    bytes.append_utf8(&mut out, "\r\nContent-Length: ")
+    bytes.append_decimal(&mut out, i64(body_len))
+    bytes.append_utf8(&mut out, "\r\nContent-Type: ")
+    bytes.append_utf8(&mut out, content_type)
+    if keep_alive {
+        bytes.append_utf8(&mut out, "\r\nConnection: keep-alive\r\nServer: dunder-http\r\n\r\n")
+    } else {
+        bytes.append_utf8(&mut out, "\r\nConnection: close\r\nServer: dunder-http\r\n\r\n")
+    }
+}
+
+pub fn write_text(out: &mut []u8, status: i32, content_type: string, body: string, is_head: bool, keep_alive: bool) {
+    write_headers(&mut out, status, content_type, body.len, keep_alive)
+    if !is_head && body.len > 0 {
+        bytes.append_utf8(&mut out, body)
+    }
+}
+
+pub fn write_slice(out: &mut []u8, status: i32, content_type: string, src: &[]u8, start: i32, end: i32, is_head: bool, keep_alive: bool) {
+    assert(start >= 0 && start <= end && end <= src.len)
+    body_len := end - start
+    write_headers(&mut out, status, content_type, body_len, keep_alive)
+    if !is_head && body_len > 0 {
+        bytes.extend_range(&mut out, &src, start, end)
+    }
+}
+
+pub fn write_error(out: &mut []u8, status: i32, is_head: bool, keep_alive: bool) {
+    msg := reason_phrase(status) + "\n"
+    write_text(&mut out, status, "text/plain; charset=utf-8", msg, is_head, keep_alive)
+}

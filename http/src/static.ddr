@@ -1,0 +1,57 @@
+import std.bytes as bytes
+import std.fs as fs
+import .response as response
+
+pub fn max_static_file_bytes() -> i64 { 8388608 }
+
+fn ends_with(s: string, suffix: string) -> bool {
+    if suffix.len > s.len { return false }
+    offset := s.len - suffix.len
+    for i in 0..suffix.len {
+        if s[offset + i] != suffix[i] { return false }
+    }
+    true
+}
+
+pub fn mime_type(path: string) -> string {
+    if ends_with(path, ".html") || ends_with(path, ".htm") { return "text/html; charset=utf-8" }
+    if ends_with(path, ".txt") { return "text/plain; charset=utf-8" }
+    if ends_with(path, ".css") { return "text/css; charset=utf-8" }
+    if ends_with(path, ".js") { return "application/javascript; charset=utf-8" }
+    if ends_with(path, ".json") { return "application/json; charset=utf-8" }
+    if ends_with(path, ".wasm") { return "application/wasm" }
+    if ends_with(path, ".svg") { return "image/svg+xml" }
+    if ends_with(path, ".png") { return "image/png" }
+    if ends_with(path, ".ico") { return "image/x-icon" }
+    "application/octet-stream"
+}
+
+pub fn serve(dir: &fs.ReadDir, buf: &[]u8, path_start: i32, path_end: i32, is_head: bool, keep_alive: bool, out: &mut []u8) {
+    var rel := "index.html"
+    if path_end - path_start > 1 {
+        decoded := bytes.decode_range(&buf, path_start + 1, path_end)
+        if !decoded.ok {
+            response.write_error(&mut out, 400, is_head, keep_alive)
+            return
+        }
+        rel = decoded.value
+    }
+
+    opened := fs.resolve_read(&dir, rel)
+    if !opened.ok {
+        response.write_error(&mut out, 404, is_head, keep_alive)
+        return
+    }
+
+    loaded := fs.read_bytes_limit(&opened.file, max_static_file_bytes())
+    if !loaded.ok {
+        if loaded.error == 27 {
+            response.write_error(&mut out, 413, is_head, keep_alive)
+        } else {
+            response.write_error(&mut out, 404, is_head, keep_alive)
+        }
+        return
+    }
+
+    response.write_slice(&mut out, 200, mime_type(rel), &loaded.value, 0, loaded.value.len, is_head, keep_alive)
+}
