@@ -108,7 +108,8 @@ pub fn run_suite(compiler: string, root: string) -> bool {
         write_csv_field(&mut csv_bytes, key)
         csv_bytes.push(b'\r')
         csv_bytes.push(b'\n')
-        map.put(&mut totals, key, map.get_or(&totals, key, 0) + amount)
+        total := map.get_or(&totals, key, 0) + amount
+        map.put(&mut totals, move key, total)
     }
     if !sys.write_u8(csv_path, &csv_bytes).ok { return common.fail("failed writing generated CSV") }
 

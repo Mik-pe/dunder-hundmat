@@ -357,7 +357,7 @@ fn accept_pending(
         }
         unused_nb := net.set_nonblocking(&client, true)
         unused_nd := net.set_nodelay(&client, true)
-        slot := net.set_insert(&mut streams, &mut client)
+        slot := net.set_insert(&mut streams, move client)
         ensure_slot_capacity(slot, &mut state, &mut rx_slab)
         state.active[slot] = 1
         state.rx_pos[slot] = 0

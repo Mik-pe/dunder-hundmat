@@ -202,10 +202,10 @@ fn check_concurrent_keepalive(port: i32, workers: i32, reqs_per_worker: i32, ben
     for _ in 0..workers {
         c := net.connect(net.loopback(), port)
         if !c.ok { return common.fail("concurrent client connect failed") }
-        mut s := c.stream
+        s := c.stream
         _ := net.set_nodelay(&s, true)
         _ := net.set_nonblocking(&s, true)
-        slot := net.set_insert(&mut streams, &mut s)
+        slot := net.set_insert(&mut streams, move s)
         assert(slot == done_counts.len)
         done_counts.push(0)
         tx_sent.push(0)
@@ -413,7 +413,7 @@ pub fn run_suite_mode(compiler: string, root: string, benchmark: bool) -> bool {
         if !send_raw(&s, "GET /stats HTTP/1.1\r\nHost: localhost\r\n\r\n") { return false }
         r7 := read_response(&s, &mut rx, false, 5000)
         if !r7.ok || r7.status != 200 { return common.fail("GET /stats failed") }
-        doc := json.parse_bytes(&r7.body)
+        doc := json.parse_bytes(move r7.body)
         if !doc.ok { return common.fail("GET /stats invalid JSON: " + doc.error) }
         reqs_f := json.get_i64(&doc, doc.root, "requests")
         conns_f := json.get_i64(&doc, doc.root, "active_connections")

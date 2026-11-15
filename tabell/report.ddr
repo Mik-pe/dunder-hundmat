@@ -6,8 +6,8 @@ import std.parse
 
 pub struct Report { ok: bool, output: string, line: i32, error: string }
 
-fn invalid(line: i32, message: string) -> Report {
-    Report { ok: false, output: "", line: line, error: message.clone() }
+fn invalid(line: i32, move message: string) -> Report {
+    Report { ok: false, output: "", line: line, error: message }
 }
 
 fn decimal(value: string) -> parse.Integer {
@@ -30,40 +30,45 @@ fn fits(left: i64, right: i64) -> bool {
 }
 
 pub fn summarize(source: string, group_column: string, sum_column: string) -> Report {
-    mut input := csv.reader(source)
+    mut input := csv.reader(source.clone())
     header := csv.next(&mut input)
-    if !header.ok { return invalid(header.line, header.error) }
+    if !header.ok { return invalid(header.line, move header.error) }
     if header.done { return invalid(1, "CSV header is missing") }
     mut seen := map.new()
     mut group_index := -1
     mut sum_index := -1
-    for i in 0..header.fields.len {
-        name := header.fields[i].clone()
+    header_count := header.fields.len
+    mut column := 0
+    for name in move header.fields {
         if name.len == 0 { return invalid(1, "empty column name") }
         if map.contains(&seen, name) { return invalid(1, "duplicate column: " + name) }
-        map.put(&mut seen, name, i64(i))
-        if name == group_column { group_index = i }
-        if name == sum_column { sum_index = i }
+        if name == group_column { group_index = column }
+        if name == sum_column { sum_index = column }
+        map.put(&mut seen, move name, i64(column))
+        column += 1
     }
     if group_index < 0 { return invalid(1, "column not found: " + group_column) }
     if sum_index < 0 { return invalid(1, "column not found: " + sum_column) }
     mut totals := map.new()
     while true {
-        row := csv.next(&mut input)
-        if !row.ok { return invalid(row.line, row.error) }
+        mut row := csv.next(&mut input)
+        if !row.ok { return invalid(row.line, move row.error) }
         if row.done { break }
-        if row.fields.len != header.fields.len {
-            return invalid(row.line, "expected " + header.fields.len.str() + " fields, got " + row.fields.len.str())
+        if row.fields.len != header_count {
+            return invalid(row.line, "expected " + header_count.str() + " fields, got " + row.fields.len.str())
         }
         amount := decimal(row.fields[sum_index])
         if !amount.ok {
             if amount.error == 2 { return invalid(row.line, "integer out of i64 range in column " + sum_column) }
             return invalid(row.line, "invalid integer in column " + sum_column)
         }
-        group := row.fields[group_index].clone()
+        // Field order is no longer needed; transfer the group into the map.
+        last := row.fields.len - 1
+        row.fields.swap(group_index, last)
+        group := row.fields.pop()
         previous := map.get_or(&totals, group, 0)
         if !fits(previous, amount.value) { return invalid(row.line, "group total exceeds i64 range") }
-        map.put(&mut totals, group, previous + amount.value)
+        map.put(&mut totals, move group, previous + amount.value)
     }
     mut groups := map.keys(&totals)
     array.sort_strings(&mut groups)
@@ -87,11 +92,13 @@ pub fn summarize(source: string, group_column: string, sum_column: string) -> Re
     result.output == "group,total\nAlpha,10\n\"Team, A\",3\nÖrebro,25"
     summarize("team,cents\n", "team", "cents").output == "group,total"
     summarize("team,cents\n,2\n,3", "team", "cents").output == "group,total\n,5"
+    summarize("n\n2\n2", "n", "n").output == "group,total\n2,4"
 }
 
 @test fn reports_reject_invalid_headers_rows_and_amounts() {
     !summarize("", "team", "cents").ok
     !summarize("team,team\n", "team", "team").ok
+    summarize("b,b,a,a\n", "b", "b").error == "duplicate column: b"
     !summarize("team,\n", "team", "").ok
     !summarize("team,cents\n", "missing", "cents").ok
     !summarize("team,cents\n", "team", "missing").ok

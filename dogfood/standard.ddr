@@ -11,11 +11,11 @@ fn word_stats(input: string) -> Stats {
     mut counts := map.new()
     mut distinct := set.new()
     words := text.split(text.trim(input), " ")
-    for word in words {
+    for word in move words {
         if word == "" { continue }
         previous := map.get_or(&counts, word, 0)
-        map.put(&mut counts, word, previous + 1)
-        added := set.insert(&mut distinct, word)
+        map.put(&mut counts, word.clone(), previous + 1)
+        added := set.insert(&mut distinct, move word)
     }
     assert(map.length(&counts) == set.length(&distinct))
     mut frequencies := array.ints()

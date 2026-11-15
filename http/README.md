@@ -27,3 +27,7 @@ sådana mätningar.
 Serverns buffertar och resursägande tillstånd flyttas vid bindning och retur.
 Läsande hjälpfunktioner lånar sina parametrar; uppdateringar av parser,
 sockettabeller och buffertar använder `&mut`.
+`TcpStream`, `TcpListener` och `StreamSet` är unika resursägare som inte kan
+klonas. `net.set_insert(&mut streams, move client)` lämnar över en anslutning
+till sockettabellen. Stängning sker fortfarande uttryckligen, vanligtvis
+genom `defer` och tabellens städfunktioner.

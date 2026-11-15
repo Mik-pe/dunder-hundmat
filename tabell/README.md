@@ -62,9 +62,11 @@ programargument, fil-I/O och separata stdout/stderr. Parserns och rapportens
 taggade tester finns nära funktionerna. Kompilatorns integrationstest
 [`tools/test_tabell.ddr`](../tools/test_tabell.ddr) jämför dessutom riktiga CLI-körningar med en oberoende referens.
 
-Vanliga parametrar lånar för läsning. CSV-läsaren behåller en uttrycklig
-strängklon av indatan; den delar oföränderliga UTF-8-data. Radernas fältarrayer
-flyttas till returvärdet. Sorteringen uppdaterar rapportens egen nyckelarray
+Vanliga parametrar lånar för läsning. CSV-läsaren tar över en
+strängägare. Den läsande rapportfunktionen lämnar en uttrycklig strängklon
+till läsaren; klonen delar oföränderliga UTF-8-data. Radernas fältarrayer
+flyttas till returvärdet. Efter att beloppet har lästs flyttas gruppfältet
+med `swap` och `pop` till summatabellen. Sorteringen uppdaterar rapportens egen nyckelarray
 genom `&mut`, och inga arraykopior behövs för vanliga hjälpanrop.
 
 Tabell byggs också av den självbyggda Dunder-kompilatorn.

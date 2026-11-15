@@ -58,9 +58,9 @@ fn build_isolated(compiler: string, move args: []string, work: string, expect_fa
     process.set_timeout(&mut cmd, 60000)
     res := process.exec(&cmd)
     err_txt := process.stderr_text(&res)
-    out_stderr = err_txt.clone()
-    if text.find(err_txt, "VUID-") >= 0 || text.find(err_txt, "Validation Error") >= 0 {
-        return common.fail("graphics validation error: " + err_txt)
+    out_stderr = err_txt
+    if text.find(out_stderr, "VUID-") >= 0 || text.find(out_stderr, "Validation Error") >= 0 {
+        return common.fail("graphics validation error: " + out_stderr)
     }
     if expect_fail {
         if !res.ok || res.timed_out || res.code <= 0 {
@@ -69,7 +69,7 @@ fn build_isolated(compiler: string, move args: []string, work: string, expect_fa
         return true
     }
     if !process.succeeded(&res) {
-        return common.fail("build failed: " + err_txt)
+        return common.fail("build failed: " + out_stderr)
     }
     true
 }
