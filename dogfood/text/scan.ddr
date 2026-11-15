@@ -23,7 +23,7 @@ pub fn width_at(text: string, index: i32) -> i32 {
 // Decode at a byte boundary using the public byte-indexing operations.
 pub fn rune_at(text: string, index: i32) -> rune {
     width := width_at(text, index)
-    var value := text[index]
+    mut value := text[index]
     if width == 2 { value = value % 32 }
     if width == 3 { value = value % 16 }
     if width == 4 { value = value % 8 }
@@ -38,8 +38,8 @@ pub fn rune_at(text: string, index: i32) -> rune {
     (" \t \r\n ") -> 0
 }
 pub fn word_count(text: string) -> i32 {
-    var count := 0
-    var inside := false
+    mut count := 0
+    mut inside := false
     for r in text.runes() {
         if is_space(r) {
             inside = false
@@ -81,9 +81,9 @@ pub fn find(text: string, needle: string) -> i32 {
     ("a\0b", "\0", "-") -> "a-b"
 }
 pub fn replace(text: string, needle: string, replacement: string) -> string {
-    if needle.len == 0 { return text }
-    var result := ""
-    var index := 0
+    if needle.len == 0 { return text.clone() }
+    mut result := ""
+    mut index := 0
     while index < text.len {
         if matches_at(text, needle, index) {
             result = result + replacement
@@ -99,7 +99,7 @@ pub fn replace(text: string, needle: string, replacement: string) -> string {
 
 @test fn utf8_boundaries_and_decoder_agree() {
     text := "Aå€🌍"
-    var offset := 0
+    mut offset := 0
     for expected in text.runes() {
         assert(is_boundary(text, offset))
         assert(rune_at(text, offset) == expected)

@@ -1,7 +1,7 @@
 fn main() {
-    var values := [1, 2, 3]
+    mut values := [1, 2, 3]
     values[1] = 9
-    var sum := 0
+    mut sum := 0
     for value in values.iter() {
         sum = sum + value
     }

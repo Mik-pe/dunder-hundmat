@@ -4,7 +4,7 @@ import math
 pub fn integrate(derivative: fn(f64) -> f64, initial: f64, duration: f64, steps: i32) -> f64 {
     assert(steps > 0 && duration.is_finite())
     h := duration / f64(steps)
-    var value := initial
+    mut value := initial
     for step in 0..steps {
         k1 := derivative(value)
         k2 := derivative(value + h * k1 / 2.0)

@@ -2,7 +2,7 @@
 pub fn sin(angle: f64) -> f64 {
     tau := 6.283185307179586
     pi := 3.141592653589793
-    var x := angle - (angle / tau).floor() * tau
+    mut x := angle - (angle / tau).floor() * tau
     if x > pi { x = x - tau }
     if x > pi / 2.0 { x = pi - x }
     if x < -pi / 2.0 { x = -pi - x }

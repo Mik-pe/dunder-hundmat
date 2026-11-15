@@ -12,7 +12,7 @@ struct Stages { vertex: vk.PipelineShaderStageCreateInfo, fragment: vk.PipelineS
 struct Attributes { position: vk.VertexInputAttributeDescription, color: vk.VertexInputAttributeDescription }
 
 unsafe fn targets(r: &mut state.Renderer) -> bool {
-    var attachment: vk.AttachmentDescription = zeroed()
+    mut attachment: vk.AttachmentDescription = zeroed()
     attachment.format = 37
     attachment.samples = 1
     attachment.loadOp = 1
@@ -20,22 +20,22 @@ unsafe fn targets(r: &mut state.Renderer) -> bool {
     attachment.stencilStoreOp = 1
     attachment.finalLayout = 6
     color := vk.AttachmentReference {attachment: 0, layout: 2}
-    var subpass: vk.SubpassDescription = zeroed()
+    mut subpass: vk.SubpassDescription = zeroed()
     subpass.colorAttachmentCount = 1
     subpass.pColorAttachments = addr(&color)
-    var before: vk.SubpassDependency = zeroed()
+    mut before: vk.SubpassDependency = zeroed()
     before.srcSubpass = 4294967295
     before.srcStageMask = 1
     before.dstStageMask = 1024
     before.dstAccessMask = 256
-    var after: vk.SubpassDependency = zeroed()
+    mut after: vk.SubpassDependency = zeroed()
     after.dstSubpass = 4294967295
     after.srcStageMask = 1024
     after.dstStageMask = 4096
     after.srcAccessMask = 256
     after.dstAccessMask = 2048
     dependencies := Dependencies {before: before, after: after}
-    var pass: vk.RenderPassCreateInfo = zeroed()
+    mut pass: vk.RenderPassCreateInfo = zeroed()
     pass.sType = 38
     pass.attachmentCount = 1
     pass.pAttachments = addr(&attachment)
@@ -44,7 +44,7 @@ unsafe fn targets(r: &mut state.Renderer) -> bool {
     pass.dependencyCount = 2
     pass.pDependencies = addr(&dependencies)
     if r.api.CreateRenderPass(r.device, addr(&pass), ptr(0), addr(&mut r.renderPass)) != 0 { return false }
-    var frame: vk.FramebufferCreateInfo = zeroed()
+    mut frame: vk.FramebufferCreateInfo = zeroed()
     frame.sType = 37
     frame.renderPass = r.renderPass
     frame.attachmentCount = 1
@@ -56,7 +56,7 @@ unsafe fn targets(r: &mut state.Renderer) -> bool {
 }
 
 unsafe fn module(r: &state.Renderer, words: ptr, size: usize, output: ptr) -> bool {
-    var info: vk.ShaderModuleCreateInfo = zeroed()
+    mut info: vk.ShaderModuleCreateInfo = zeroed()
     info.sType = 16
     info.codeSize = size
     info.pCode = words
@@ -66,19 +66,26 @@ unsafe fn module(r: &state.Renderer, words: ptr, size: usize, output: ptr) -> bo
 pub unsafe fn setup(r: &mut state.Renderer) -> bool {
     if !targets(&mut r) { return false }
     vertex := shader.vertex()
-    if !module(&r, addr(&vertex[0]), usize(vertex.len * 4), addr(&mut r.vertexShader)) { return false }
+    // Publish each output after the shared renderer borrow ends, even on failure.
+    mut vertex_shader := r.vertexShader
+    vertex_ready := module(&r, addr(&vertex[0]), usize(vertex.len * 4), addr(&mut vertex_shader))
+    r.vertexShader = vertex_shader
+    if !vertex_ready { return false }
     fragment := shader.fragment()
-    if !module(&r, addr(&fragment[0]), usize(fragment.len * 4), addr(&mut r.fragmentShader)) { return false }
-    var layout: vk.PipelineLayoutCreateInfo = zeroed()
+    mut fragment_shader := r.fragmentShader
+    fragment_ready := module(&r, addr(&fragment[0]), usize(fragment.len * 4), addr(&mut fragment_shader))
+    r.fragmentShader = fragment_shader
+    if !fragment_ready { return false }
+    mut layout: vk.PipelineLayoutCreateInfo = zeroed()
     layout.sType = 30
     if r.api.CreatePipelineLayout(r.device, addr(&layout), ptr(0), addr(&mut r.pipelineLayout)) != 0 { return false }
 
-    var stage: vk.PipelineShaderStageCreateInfo = zeroed()
+    mut stage: vk.PipelineShaderStageCreateInfo = zeroed()
     stage.sType = 18
     stage.stage = 1
     stage.module = r.vertexShader
     stage.pName = cstr("main")
-    var stages := Stages {vertex: stage, fragment: stage}
+    mut stages := Stages {vertex: stage, fragment: stage}
     stages.fragment.stage = 16
     stages.fragment.module = r.fragmentShader
     binding := vk.VertexInputBindingDescription {binding: 0, stride: 32, inputRate: 0}
@@ -86,38 +93,38 @@ pub unsafe fn setup(r: &mut state.Renderer) -> bool {
         position: vk.VertexInputAttributeDescription {location: 0, binding: 0, format: 109, offset: 0},
         color: vk.VertexInputAttributeDescription {location: 1, binding: 0, format: 109, offset: 16}
     }
-    var input: vk.PipelineVertexInputStateCreateInfo = zeroed()
+    mut input: vk.PipelineVertexInputStateCreateInfo = zeroed()
     input.sType = 19
     input.vertexBindingDescriptionCount = 1
     input.pVertexBindingDescriptions = addr(&binding)
     input.vertexAttributeDescriptionCount = 2
     input.pVertexAttributeDescriptions = addr(&attributes)
-    var assembly: vk.PipelineInputAssemblyStateCreateInfo = zeroed()
+    mut assembly: vk.PipelineInputAssemblyStateCreateInfo = zeroed()
     assembly.sType = 20
     assembly.topology = 3
     viewport := vk.Viewport {x: 0.0, y: 0.0, width: f32(r.width), height: f32(r.height), minDepth: 0.0, maxDepth: 1.0}
     scissor := vk.Rect2D {offset: vk.Offset2D {x: 0, y: 0}, extent: vk.Extent2D {width: u32(r.width), height: u32(r.height)}}
-    var view: vk.PipelineViewportStateCreateInfo = zeroed()
+    mut view: vk.PipelineViewportStateCreateInfo = zeroed()
     view.sType = 22
     view.viewportCount = 1
     view.pViewports = addr(&viewport)
     view.scissorCount = 1
     view.pScissors = addr(&scissor)
-    var raster: vk.PipelineRasterizationStateCreateInfo = zeroed()
+    mut raster: vk.PipelineRasterizationStateCreateInfo = zeroed()
     raster.sType = 23
     raster.lineWidth = 1.0
-    var samples: vk.PipelineMultisampleStateCreateInfo = zeroed()
+    mut samples: vk.PipelineMultisampleStateCreateInfo = zeroed()
     samples.sType = 24
     samples.rasterizationSamples = 1
     color := vk.PipelineColorBlendAttachmentState {
         blendEnable: 1, srcColorBlendFactor: 6, dstColorBlendFactor: 7, colorBlendOp: 0,
         srcAlphaBlendFactor: 1, dstAlphaBlendFactor: 7, alphaBlendOp: 0, colorWriteMask: 15
     }
-    var blend: vk.PipelineColorBlendStateCreateInfo = zeroed()
+    mut blend: vk.PipelineColorBlendStateCreateInfo = zeroed()
     blend.sType = 26
     blend.attachmentCount = 1
     blend.pAttachments = addr(&color)
-    var info: vk.GraphicsPipelineCreateInfo = zeroed()
+    mut info: vk.GraphicsPipelineCreateInfo = zeroed()
     info.sType = 28
     info.stageCount = 2
     info.pStages = addr(&stages)
@@ -135,12 +142,12 @@ pub unsafe fn setup(r: &mut state.Renderer) -> bool {
 
 pub unsafe fn render(r: &state.Renderer, vertices: u32, red: f32, green: f32, blue: f32) -> bool {
     if r.api.ResetCommandBuffer(r.command, 0) != 0 { return false }
-    var begin: vk.CommandBufferBeginInfo = zeroed()
+    mut begin: vk.CommandBufferBeginInfo = zeroed()
     begin.sType = 42
     begin.flags = 1
     if r.api.BeginCommandBuffer(r.command, addr(&begin)) != 0 { return false }
     clear: [f32; 4] = [red, green, blue, 1.0]
-    var pass: vk.RenderPassBeginInfo = zeroed()
+    mut pass: vk.RenderPassBeginInfo = zeroed()
     pass.sType = 43
     pass.renderPass = r.renderPass
     pass.framebuffer = r.framebuffer
@@ -154,18 +161,18 @@ pub unsafe fn render(r: &state.Renderer, vertices: u32, red: f32, green: f32, bl
     r.api.CmdBindVertexBuffers(r.command, 0, 1, addr(&r.vertex.handle), addr(&offset))
     r.api.CmdDraw(r.command, vertices, 1, 0, 0)
     r.api.CmdEndRenderPass(r.command)
-    var copy: vk.BufferImageCopy = zeroed()
+    mut copy: vk.BufferImageCopy = zeroed()
     copy.imageSubresource.aspectMask = 1
     copy.imageSubresource.layerCount = 1
     copy.imageExtent = vk.Extent3D {width: u32(r.width), height: u32(r.height), depth: 1}
     r.api.CmdCopyImageToBuffer(r.command, r.image, 6, r.readback.handle, 1, addr(&copy))
-    var barrier: vk.MemoryBarrier = zeroed()
+    mut barrier: vk.MemoryBarrier = zeroed()
     barrier.sType = 46
     barrier.srcAccessMask = 4096
     barrier.dstAccessMask = 8192
     r.api.CmdPipelineBarrier(r.command, 4096, 16384, 0, 1, addr(&barrier), 0, ptr(0), 0, ptr(0))
     if r.api.EndCommandBuffer(r.command) != 0 { return false }
-    var submit: vk.SubmitInfo = zeroed()
+    mut submit: vk.SubmitInfo = zeroed()
     submit.sType = 4
     submit.commandBufferCount = 1
     submit.pCommandBuffers = addr(&r.command)

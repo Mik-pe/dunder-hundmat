@@ -11,11 +11,11 @@ pub struct Row {
 }
 
 pub fn reader(source: string) -> Reader {
-    var cursor := 0
+    mut cursor := 0
     if source.len >= 3 && source[0] == 239 && source[1] == 187 && source[2] == 191 {
         cursor = 3
     }
-    Reader { source: source, cursor: cursor, line: 1 }
+    Reader { source: source.clone(), cursor: cursor, line: 1 }
 }
 
 fn decoded(field: &[]u8) -> string {
@@ -25,7 +25,7 @@ fn decoded(field: &[]u8) -> string {
 }
 
 fn invalid(line: i32, message: string) -> Row {
-    Row { ok: false, done: false, fields: [], line: line, error: message }
+    Row { ok: false, done: false, fields: [], line: line, error: message.clone() }
 }
 
 pub fn next(input: &mut Reader) -> Row {
@@ -33,10 +33,10 @@ pub fn next(input: &mut Reader) -> Row {
         return Row { ok: true, done: true, fields: [], line: input.line, error: "" }
     }
     start_line := input.line
-    var fields: []string = []
-    var field: []u8 = []
+    mut fields: []string = []
+    mut field: []u8 = []
     // 0=start of field, 1=unquoted field, 2=quoted field, 3=closing quote seen.
-    var state := 0
+    mut state := 0
     while input.cursor < input.source.len {
         byte := input.source[input.cursor]
         if state == 2 {
@@ -91,7 +91,7 @@ pub fn next(input: &mut Reader) -> Row {
 }
 
 pub fn write_field(output: &mut []u8, value: string) {
-    var quoted := false
+    mut quoted := false
     for byte in value.bytes() {
         if byte == 44 || byte == 34 || byte == 10 || byte == 13 { quoted = true }
     }
@@ -104,7 +104,7 @@ pub fn write_field(output: &mut []u8, value: string) {
 }
 
 @test fn csv_quotes_newlines_empty_fields_and_eof() {
-    var input := reader("a,b,c\r\n\"å,🌍\",\"say \"\"hej\"\"\",\"one\r\ntwo\"\r\n,,")
+    mut input := reader("a,b,c\r\n\"å,🌍\",\"say \"\"hej\"\"\",\"one\r\ntwo\"\r\n,,")
     header := next(&mut input)
     header.ok && !header.done && header.fields.len == 3 && header.line == 1
     row := next(&mut input)
@@ -119,28 +119,28 @@ pub fn write_field(output: &mut []u8, value: string) {
 }
 
 @test fn csv_bom_and_malformed_records() {
-    var bom := reader("\u{feff}a,b\n")
+    mut bom := reader("\u{feff}a,b\n")
     next(&mut bom).fields[0] == "a"
     next(&mut bom).done
     bad: []string = ["\"unfinished", "x\"y,z", "\"closed\"x,z", "\"a\" \n"]
     for source in bad {
-        var input := reader(source)
+        mut input := reader(source)
         !next(&mut input).ok
     }
-    var empty := reader("")
+    mut empty := reader("")
     next(&mut empty).done
-    var quoted := reader("\"\"")
+    mut quoted := reader("\"\"")
     next(&mut quoted).fields[0] == ""
 }
 
 @test fn csv_writer_round_trips_special_fields() {
     values: []string = ["", "plain", "å 🌍", "a,b", "say \"hej\"", "a\nb", "a\rb", "a\0b"]
     for value in values {
-        var output: []u8 = []
+        mut output: []u8 = []
         write_field(&mut output, value)
         // A comma keeps the empty first field distinguishable from an empty file.
         output.push(44)
-        var input := reader(decoded(&output))
+        mut input := reader(decoded(&output))
         row := next(&mut input)
         row.ok && row.fields.len == 2
         row.fields[0] == value

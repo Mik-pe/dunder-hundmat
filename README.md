@@ -24,3 +24,15 @@ För enstaka delar:
 /sökväg/till/dunder run tools/test_graphics.ddr -- /sökväg/till/dunder
 /sökväg/till/dunder run tools/test_http.ddr -- /sökväg/till/dunder
 ```
+
+Standardverifieringen kör funktionella prov utan prestandamätningar.
+HTTP-provet kontrollerar bland annat 128 svar över åtta samtidiga klienter.
+För en uttryckligt beställd throughputmätning finns ett separat opt-in-läge:
+
+```sh
+/sökväg/till/dunder run tools/test_http.ddr -- /sökväg/till/dunder --benchmark
+```
+
+Källorna använder `mut` för ändringsbara bindningar. Vanliga parametrar
+lånar resursvärden, medan `move`-parametrar tar över ägaren. Se
+[dogfood-programmens ägarregler](dogfood/README.md).

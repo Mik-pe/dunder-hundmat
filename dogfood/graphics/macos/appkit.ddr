@@ -120,7 +120,7 @@ pub unsafe fn initialize(s: &mut metal.State) -> bool {
 }
 
 unsafe fn window_title(window: ptr, title: string) -> bool {
-    var bytes: []u8 = []
+    mut bytes: []u8 = []
     bytes.reserve(title.len + 1)
     for b in title.bytes() { bytes.push(u8(b)) }
     bytes.push(0)
@@ -196,7 +196,7 @@ pub unsafe fn poll(s: &mut metal.State) {
     s.key = -1
     if s.closed != 0 { return }
     pool := o.pool()
-    var date := o.get_date(o.class_named(cstr("NSDate")), cstr("dateWithTimeIntervalSinceNow:"), 0.008)
+    mut date := o.get_date(o.class_named(cstr("NSDate")), cstr("dateWithTimeIntervalSinceNow:"), 0.008)
     for i in 0..256 {
         event := o.next_event(s.application, cstr("nextEventMatchingMask:untilDate:inMode:dequeue:"), u64(0).bit_not(), date, s.mode, 1)
         if event == ptr(0) { break }

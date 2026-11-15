@@ -6,20 +6,20 @@ import scene
 fn main() -> i32 {
     settings := options.read()
     if !settings.ok { diagnostic := sys.eprint(settings.error); return 2 }
-    var opened: vulkan.OpenResult = vulkan.OpenResult { ok: false, window: vulkan.Window { id: 0 }, error: "" }
+    mut opened: vulkan.OpenResult = vulkan.OpenResult { ok: false, window: vulkan.Window { id: 0 }, error: "" }
     if settings.headless { opened = vulkan.open_headless(1100, 740) }
     else { opened = vulkan.open("Dunder / Vulkan Kinetic Atlas - drag | Space pause | C color | R reset | Esc close", 1100, 740) }
     if !opened.ok { diagnostic := sys.eprint(opened.error); return 1 }
     print("device=" + vulkan.device_name(opened.window))
-    var state := scene.initial()
-    var vertices: []f32 = []
+    mut state := scene.initial()
+    mut vertices: []f32 = []
     vertices.reserve(40000)
-    var frames: i64 = 0
-    var width := 1100
-    var height := 740
-    var running := true
+    mut frames: i64 = 0
+    mut width := 1100
+    mut height := 740
+    mut running := true
     while running {
-        var frame := vulkan.poll(opened.window)
+        mut frame := vulkan.poll(opened.window)
         if frame.closed || frame.key == 27 { running = false }
         else {
             // Capture/headless animation is reproducible across machine speeds.

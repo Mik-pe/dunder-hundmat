@@ -9,8 +9,8 @@ import std.process as process
 import std.text as text
 import sys
 
-fn run_dunder_tests(compiler: string, suite_path: string, out_path: string) -> bool {
-    var cmd := process.command(compiler, ["test", suite_path, "-o", out_path])
+fn run_dunder_tests(compiler: string, suite_path: string, move out_path: string) -> bool {
+    mut cmd := process.command(compiler.clone(), ["test", suite_path.clone(), "-o", out_path])
     process.set_timeout(&mut cmd, 120000)
     res := process.exec(&cmd)
     if res.stdout.len > 0 { print(text.trim(process.stdout_text(&res))) }

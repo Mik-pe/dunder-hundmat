@@ -49,7 +49,7 @@ pub fn update(state: &mut State, frame: macos.Frame) {
         if frame.pointer_down && !state.previous_down {
             dx := frame.pointer_x - state.center_x * width
             dy := frame.pointer_y - state.center_y * height
-            var reach := height * 0.30
+            mut reach := height * 0.30
             if width * 0.30 < reach { reach = width * 0.30 }
             if dx * dx + dy * dy <= reach * reach {
                 state.dragging = true
@@ -155,7 +155,7 @@ pub fn render(vertices: &mut []f32, state: State, frame: macos.Frame) {
     if frame.width <= 0 || frame.height <= 0 { return }
     width := f64(frame.width)
     height := f64(frame.height)
-    var unit := height / 740.0
+    mut unit := height / 740.0
     if width / 1100.0 < unit { unit = width / 1100.0 }
     canvas := Canvas { width: width, height: height }
     mint := accent(state.palette)
@@ -165,9 +165,9 @@ pub fn render(vertices: &mut []f32, state: State, frame: macos.Frame) {
     muted := macos.rgb(0.34, 0.42, 0.49)
     grid := macos.rgba(0.45, 0.68, 0.72, 0.055)
     step := 48.0 * unit
-    var x := 30.0 * unit
+    mut x := 30.0 * unit
     while x < width { fill(&mut vertices, canvas, x, 0.0, 0.6 * unit, height, grid); x = x + step }
-    var y := 24.0 * unit
+    mut y := 24.0 * unit
     while y < height { fill(&mut vertices, canvas, 0.0, y, width, 0.6 * unit, grid); y = y + step }
 
     label(&mut vertices, canvas, 42.0 * unit, 38.0 * unit, "DUNDER", 4.5 * unit, cream)
@@ -235,7 +235,7 @@ pub fn render(vertices: &mut []f32, state: State, frame: macos.Frame) {
     }
     fill(&mut vertices, canvas, 44.0 * unit, height - 53.0 * unit, width - 88.0 * unit, 0.8 * unit, macos.rgba(0.44, 0.69, 0.70, 0.20))
     for mark in 0..12 {
-        var bar := 2.0
+        mut bar := 2.0
         if state.motion == .Running { bar = 2.0 + (math.sin(t * 2.3 + f64(mark) * 0.6) + 1.0) * 5.0 }
         fill(&mut vertices, canvas, (44.0 + f64(mark) * 5.0) * unit, height - (26.0 + bar) * unit, 2.0 * unit, bar * unit, mint)
     }
@@ -249,8 +249,8 @@ fn sample_frame() -> macos.Frame {
 }
 
 @test fn input_controls_pause_palette_and_drag_in_logical_points() {
-    var state := initial()
-    var frame := sample_frame()
+    mut state := initial()
+    mut frame := sample_frame()
     update(&mut state, frame)
     state.time == 0.05
     frame.key = 49
@@ -282,7 +282,7 @@ fn sample_frame() -> macos.Frame {
 @test fn scene_reuses_storage_and_emits_finite_triangle_geometry() {
     state := initial()
     frame := sample_frame()
-    var vertices: []f32 = []
+    mut vertices: []f32 = []
     vertices.reserve(40000)
     render(&mut vertices, state, frame)
     count := vertices.len

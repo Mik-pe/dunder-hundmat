@@ -28,8 +28,8 @@ Med kompilatorn kopierad till `build/dunder` används samma kommandon som
 | --- | --- | --- |
 | [collections.ddr](collections.ddr) | Arrayändring, intervall, iteratorer och längd. | `-2`, `-1`, `0`, `1`, `13`, `3` |
 | [recursion.ddr](recursion.ddr) | Rekursiv Fibonacci och Euklides algoritm. | `6765`, `21` |
-| [sorting.ddr](sorting.ddr) | Insertion sort, index, kopierad arrayparameter, for/while och ordningskontroll. | `45`, `9` |
-| [iterators.ddr](iterators.ddr) | Fold med callback, återanvändbar iterator, continue och returnerat intervall. | `36`, `20`, `0` |
+| [sorting.ddr](sorting.ddr) | Insertion sort på en uttrycklig arrayklon, lånad parameter, for/while och ordningskontroll. | `45`, `9` |
+| [iterators.ddr](iterators.ddr) | Fold med callback, uttryckligt klonad iteratorsnapshot, continue och returnerat intervall. | `36`, `20`, `0` |
 | [arena/main.ddr](arena/main.ddr) | Bump-allokering, kapacitetsfel och rekursiv traversering över tre moduler. | `28` |
 | [structs.ddr](structs.ddr) | Exporterad struct, uttryck som input, värdekopia och fältändring. | `25`, `32`, `3` |
 | [numeric/main.ddr](numeric/main.ddr) | f32-vektor, kompenserad f64-summering och rotberäkning med callback. | `5.0`, `2.0`, `true` |
@@ -66,12 +66,24 @@ och runnern fortsätter med nästa. Tester från gemensamma importer körs en
 gång. Testbyggen behöver ingen `main` och kör inte programmets `main`.
 Standardtidsgränsen är fem sekunder per grupp; `--timeout-ms` ändrar den.
 
-Arrayer, structar och arrayiteratorer har värdesemantik och kopieras vid
-bindning och anrop. Iteratorer tar en kopia av arrayen; de lånar den inte.
+Vanliga funktionsparametrar lånar resursvärden för läsning under anropet.
+Bindning, tilldelning och retur flyttar arrayer, strängar, iteratorer och
+structar/enums som innehåller sådana värden. Använd `.clone()` när båda
+ägarna ska finnas kvar. En parameter med `move` tar över värdet och anropas
+med `move value` för en redan lagrad ägare. `mut` tillåter ändring;
+`&mut value` ger funktionen ett exklusivt skrivlån. Tal och structar med
+enbart kopierbara fält, som `geometry.Point`, kan fortsatt kopieras.
+
+Vanlig `for` och `match` lånar också. `for value in values.iter()` lånar
+arrayen under loopen. En lagrad ägande iterator kräver
+`(move values).iter()` eller `values.clone().iter()`; det senare används
+i iteratorprovet så att originalarrayen kan användas igen.
 Arrayelement stöder `i32`, `i64`, `f32`, `f64`, `bool`, `string`, `rune`
 och enums utan payload. Structfält kan också innehålla nästlade aggregat,
 dynamiska arrayer och funktionsvärden.
-Structar, fasta arrayer och data-enums kan returneras med värdesemantik.
+En flytt av ett resursägande fält förbrukar hela ursprungsobjektet; övriga
+fält städas fortfarande. Arrayelement kan tas ut med `pop` eller klonas
+uttryckligen. Inline-arrayfält i C-layout klonas för en fristående ägare.
 Användardefinierade iteratorer återstår.
 
 Standardbiblioteket i `dunder` är Dunder-kod, inbäddad i
@@ -137,16 +149,16 @@ Strängmodellen lånar uppdelningen mellan byte och runes från
 arrayer. En sammansatt emoji kan innehålla flera runes. Ingen normalisering
 eller grapheme-klusterhantering görs.
 
-Dynamiska strängar använder en separat 16 MiB processarena. Kopior kan
-dela oföränderliga data; sammanslagning, snitt och vissa `.str()`-anrop
-allokerar nya värden. Gamla värden återvinns först vid processlut, så många
-upprepade operationer kan fylla arenan och ge status 105. Inga anspråk på
-optimerad textbearbetning eller färdig minneshantering görs här.
+Dynamiska strängar delar Dunders minnespool med arrayer och återvinns när
+den sista ägaren släpps. En uttrycklig strängklon delar oföränderliga UTF-8-data
+med referensräkning; en arrayklon har en oberoende buffert. Sammanslagning,
+snitt och vissa `.str()`-anrop allokerar nya strängvärden. Gränsen för ett
+enskilt strängblock i dessa operationer är 16 MiB, inklusive längdordet.
 
 Arenan använder en fast `[i32; 96]` på stacken. `pool.reserve` kontrollerar
 kapacitet och flyttar markören; den gamla markören är ett indexhandtag.
 Varje trädnod upptar tre platser: värde, vänster index, höger index.
 `-1` betyder tom länk. Det är fungerande bump-allokering inom den bufferten,
-men inget allmänt allokerings-API eller färdig minnesmodell för språket. Bufferten
-kopieras i dagens rekursiva anrop; detta är ett korrekthetsprov, inte ett
-prestandaanspråk.
+men inget allmänt allokerings-API. De rekursiva funktionerna lånar bufferten
+för läsning, så traverseringen behöver inga arraykopior. Detta är ett
+korrekthetsprov utan prestandaanspråk.

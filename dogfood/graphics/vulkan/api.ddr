@@ -57,7 +57,7 @@ pub struct Api {
 }
 
 pub unsafe fn load(api: &mut Api, library: ptr) -> bool {
-    var symbol := ptr(0)
+    mut symbol := ptr(0)
     symbol = dl.symbol(library, cstr("vkCreateInstance"))
     if symbol == ptr(0) { return false }
     api.CreateInstance = ffi_fn(symbol)

@@ -23,7 +23,7 @@ pub struct Frame {
 }
 pub struct DrawResult { ok: bool, error: string, frames: i64 }
 
-fn open_error(message: string) -> OpenResult { OpenResult { ok: false, window: Window {id: 0}, error: message } }
+fn open_error(move message: string) -> OpenResult { OpenResult { ok: false, window: Window {id: 0}, error: message } }
 
 unsafe fn open_window(s: &mut metal.State, title: string, width: i32, height: i32) -> OpenResult {
     if width < 1 || width > 16384 || height < 1 || height > 16384 {
@@ -131,7 +131,7 @@ pub fn quad(vertices: &mut []f32, x: f32, y: f32, width: f32, height: f32, color
 }
 
 @test fn geometry_emits_interleaved_triangle_lists() {
-    var vertices: []f32 = []
+    mut vertices: []f32 = []
     a := Point { x: -0.5, y: -0.5 }
     b := Point { x: 0.5, y: -0.5 }
     c := Point { x: 0.0, y: 0.5 }

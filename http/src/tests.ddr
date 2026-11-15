@@ -10,7 +10,7 @@ import .static as static_files
 import .server as server
 
 fn to_bytes(text: string) -> []u8 {
-    var b: []u8 = []
+    mut b: []u8 = []
     bytes.append_utf8(&mut b, text)
     b
 }
@@ -59,7 +59,7 @@ fn protocol_handles_incomplete_and_rejects_invalid_requests() {
 
 @test
 fn response_head_and_static_confinement() {
-    var out: []u8 = []
+    mut out: []u8 = []
     response.write_text(&mut out, 200, "text/plain; charset=utf-8", "ok\n", true, true)
     assert(bytes.equals_text(&out, 0, out.len, "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: keep-alive\r\nServer: dunder-http\r\n\r\n"))
 
@@ -70,7 +70,7 @@ fn response_head_and_static_confinement() {
     assert(sys.write_text(idx, "<h1>hi</h1>").ok)
     defer { unused_i := sys.remove_file(idx) }
 
-    dir := fs.grant_dir(root)
+    dir := fs.grant_dir(root.clone())
 
     out.clear()
     req_root := to_bytes("/")
@@ -85,7 +85,7 @@ fn response_head_and_static_confinement() {
     // Verify server.serve reports AddressInUse (48) cleanly when port is already bound.
     lres := net.listen(net.loopback(), 0, 8)
     assert(lres.ok)
-    var occupied := lres.listener
+    mut occupied := lres.listener
     defer { unused_l := net.close_listener(&mut occupied) }
     busy := server.serve(server.ServerConfig {
         host: net.loopback(),

@@ -17,3 +17,13 @@ dunder test src/tests.ddr
 dunder build -o build/dunder-http
 ./build/dunder-http --port 8080 --dir ./www
 ```
+
+Från reporoten kör `dunder run tools/test_http.ddr -- /sökväg/till/dunder`
+funktionella nätverksprov, inklusive 128 svar över åtta samtidiga klienter.
+Mätningar av throughput och latens kräver den uttryckliga flaggan
+`--benchmark` efter kompilatorsökvägen. Den vanliga verifieringen gör inga
+sådana mätningar.
+
+Serverns buffertar och resursägande tillstånd flyttas vid bindning och retur.
+Läsande hjälpfunktioner lånar sina parametrar; uppdateringar av parser,
+sockettabeller och buffertar använder `&mut`.

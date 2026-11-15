@@ -3,7 +3,7 @@ fn add(a: i32, b: i32) -> i32 {
 }
 
 pub fn fold(values: [i32; 8], combine: fn(i32, i32) -> i32, initial: i32) -> i32 {
-    var result := initial
+    mut result := initial
     for value in values.iter() {
         result = combine(result, value)
     }
@@ -16,15 +16,15 @@ fn signed_range() -> range {
 
 fn main() {
     values := [1, 2, 3, 4, 5, 6, 7, 8]
-    iterator := values.iter()
-    var even_sum := 0
+    iterator := values.clone().iter()
+    mut even_sum := 0
     for value in iterator {
         if value % 2 != 0 {
             continue
         }
         even_sum = even_sum + value
     }
-    var signed_sum := 0
+    mut signed_sum := 0
     for value in signed_range() {
         signed_sum = signed_sum + value
     }
@@ -36,8 +36,8 @@ fn main() {
 @test
 fn immutable_iterators_can_be_reused() {
     values := [1, 2, 3, 4, 5, 6, 7, 8]
-    iterator := values.iter()
-    var total := 0
+    iterator := values.clone().iter()
+    mut total := 0
     for value in iterator { total = total + value }
     for value in iterator { total = total + value }
     assert(total == 72)

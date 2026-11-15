@@ -4,25 +4,25 @@ import .layout as vk
 import .state as state
 
 unsafe fn create_device(r: &mut state.Renderer) -> bool {
-    var app: vk.ApplicationInfo = zeroed()
+    mut app: vk.ApplicationInfo = zeroed()
     app.apiVersion = 4194304
-    var instance: vk.InstanceCreateInfo = zeroed()
+    mut instance: vk.InstanceCreateInfo = zeroed()
     instance.sType = 1
     instance.pApplicationInfo = addr(&app)
     if r.api.CreateInstance(addr(&instance), ptr(0), addr(&mut r.instance)) != 0 { return false }
 
     // The first available device is sufficient. VK_INCOMPLETE is expected
     // when another device exists after the first one.
-    var count: u32 = 1
+    mut count: u32 = 1
     status := r.api.EnumeratePhysicalDevices(r.instance, addr(&mut count), addr(&mut r.physical))
     if (status != 0 && status != 5) || count == 0 { return false }
     r.api.GetPhysicalDeviceProperties(r.physical, addr(&mut r.properties))
     r.api.GetPhysicalDeviceMemoryProperties(r.physical, addr(&mut r.memoryProperties))
     // QueueFamilyProperties contains six u32 words, with flags and count first.
-    var families: [u32; 192] = [0; 192]
+    mut families: [u32; 192] = [0; 192]
     count = 32
     r.api.GetPhysicalDeviceQueueFamilyProperties(r.physical, addr(&mut count), addr(&mut families[0]))
-    var family := 0
+    mut family := 0
     while family < i32(count) {
         if i32(families[family * 6]).bit_and(1) != 0 && families[family * 6 + 1] > 0 { break }
         family = family + 1
@@ -30,23 +30,23 @@ unsafe fn create_device(r: &mut state.Renderer) -> bool {
     if family == i32(count) { return false }
     r.family = u32(family)
     priority: f32 = 1.0
-    var q: vk.DeviceQueueCreateInfo = zeroed()
+    mut q: vk.DeviceQueueCreateInfo = zeroed()
     q.sType = 2
     q.queueFamilyIndex = r.family
     q.queueCount = 1
     q.pQueuePriorities = addr(&priority)
-    var device: vk.DeviceCreateInfo = zeroed()
+    mut device: vk.DeviceCreateInfo = zeroed()
     device.sType = 3
     device.queueCreateInfoCount = 1
     device.pQueueCreateInfos = addr(&q)
     if r.api.CreateDevice(r.physical, addr(&device), ptr(0), addr(&mut r.device)) != 0 { return false }
     r.api.GetDeviceQueue(r.device, r.family, 0, addr(&mut r.queue))
-    var pool: vk.CommandPoolCreateInfo = zeroed()
+    mut pool: vk.CommandPoolCreateInfo = zeroed()
     pool.sType = 39
     pool.flags = 2
     pool.queueFamilyIndex = r.family
     if r.api.CreateCommandPool(r.device, addr(&pool), ptr(0), addr(&mut r.pool)) != 0 { return false }
-    var command: vk.CommandBufferAllocateInfo = zeroed()
+    mut command: vk.CommandBufferAllocateInfo = zeroed()
     command.sType = 40
     command.commandPool = r.pool
     command.commandBufferCount = 1
@@ -54,11 +54,11 @@ unsafe fn create_device(r: &mut state.Renderer) -> bool {
 }
 
 unsafe fn allocate(r: &state.Renderer, requirements: &vk.MemoryRequirements, flags: i32, output: ptr) -> bool {
-    var i := 0
+    mut i := 0
     while i < i32(r.memoryProperties.typeCount) {
         bits := i32(requirements.memoryTypeBits)
         if bits.bit_and(i32(1).shl(i)) != 0 && i32(r.memoryProperties.types[i * 2]).bit_and(flags) == flags {
-            var alloc: vk.MemoryAllocateInfo = zeroed()
+            mut alloc: vk.MemoryAllocateInfo = zeroed()
             alloc.sType = 5
             alloc.allocationSize = requirements.size
             alloc.memoryTypeIndex = u32(i)
@@ -70,12 +70,12 @@ unsafe fn allocate(r: &state.Renderer, requirements: &vk.MemoryRequirements, fla
 }
 
 unsafe fn buffer(r: &state.Renderer, b: &mut state.Buffer, size: u64, usage: u32) -> bool {
-    var info: vk.BufferCreateInfo = zeroed()
+    mut info: vk.BufferCreateInfo = zeroed()
     info.sType = 12
     info.size = size
     info.usage = usage
     if r.api.CreateBuffer(r.device, addr(&info), ptr(0), addr(&mut b.handle)) != 0 { return false }
-    var requirements: vk.MemoryRequirements = zeroed()
+    mut requirements: vk.MemoryRequirements = zeroed()
     r.api.GetBufferMemoryRequirements(r.device, b.handle, addr(&mut requirements))
     if !allocate(&r, &requirements, 6, addr(&mut b.memory)) { return false }
     if r.api.BindBufferMemory(r.device, b.handle, b.memory, 0) != 0 { return false }
@@ -84,7 +84,7 @@ unsafe fn buffer(r: &state.Renderer, b: &mut state.Buffer, size: u64, usage: u32
 
 pub unsafe fn setup(r: &mut state.Renderer) -> bool {
     if !create_device(&mut r) { return false }
-    var image: vk.ImageCreateInfo = zeroed()
+    mut image: vk.ImageCreateInfo = zeroed()
     image.sType = 14
     image.imageType = 1
     image.format = 37
@@ -94,11 +94,15 @@ pub unsafe fn setup(r: &mut state.Renderer) -> bool {
     image.samples = 1
     image.usage = 17
     if r.api.CreateImage(r.device, addr(&image), ptr(0), addr(&mut r.image)) != 0 { return false }
-    var requirements: vk.MemoryRequirements = zeroed()
+    mut requirements: vk.MemoryRequirements = zeroed()
     r.api.GetImageMemoryRequirements(r.device, r.image, addr(&mut requirements))
-    if !allocate(&r, &requirements, 0, addr(&mut r.imageMemory)) { return false }
+    // Keep shared renderer reads separate from writable initialization outputs.
+    mut image_memory := r.imageMemory
+    image_ready := allocate(&r, &requirements, 0, addr(&mut image_memory))
+    r.imageMemory = image_memory
+    if !image_ready { return false }
     if r.api.BindImageMemory(r.device, r.image, r.imageMemory, 0) != 0 { return false }
-    var view: vk.ImageViewCreateInfo = zeroed()
+    mut view: vk.ImageViewCreateInfo = zeroed()
     view.sType = 15
     view.image = r.image
     view.viewType = 1
@@ -108,8 +112,15 @@ pub unsafe fn setup(r: &mut state.Renderer) -> bool {
     view.subresourceRange.layerCount = 1
     if r.api.CreateImageView(r.device, addr(&view), ptr(0), addr(&mut r.imageView)) != 0 { return false }
     // Both mapped allocations remain valid until queue idle and teardown.
-    if !buffer(&r, ref_at(addr(&mut r.vertex)), 3200000, 128) { return false }
-    buffer(&r, ref_at(addr(&mut r.readback)), u64(r.width * r.height * 4), 2)
+    // Publish partial results before testing success so teardown can free them.
+    mut vertex := r.vertex
+    vertex_ready := buffer(&r, &mut vertex, 3200000, 128)
+    r.vertex = vertex
+    if !vertex_ready { return false }
+    mut readback := r.readback
+    readback_ready := buffer(&r, &mut readback, u64(r.width * r.height * 4), 2)
+    r.readback = readback
+    readback_ready
 }
 
 pub unsafe fn destroy(r: &mut state.Renderer) {

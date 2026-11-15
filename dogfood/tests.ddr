@@ -23,9 +23,9 @@ fn modules_compose() {
 
 @test
 fn ranges_and_arrays_agree() {
-    var values := [0; 8]
+    mut values := [0; 8]
     for i in 0..len(values) { values[i] = i + 1 }
-    var checksum := 0
+    mut checksum := 0
     for value in values { checksum = checksum + value }
     assert(checksum == 36)
 }

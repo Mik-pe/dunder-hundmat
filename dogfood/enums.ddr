@@ -23,7 +23,7 @@ fn evaluate(command: Command) -> i32 {
 }
 fn describe(result: sys.ReadResult) -> string {
     match result {
-        .Ok(text) => text,
+        .Ok(text) => text.clone(),
         .Err(error) => {
             match error {
                 .NotFound => "missing",
@@ -35,11 +35,11 @@ fn describe(result: sys.ReadResult) -> string {
 }
 
 @test fn value_enums_work_in_records_and_arrays() {
-    var entry := Entry { kind: .File, size: 42 }
+    mut entry := Entry { kind: .File, size: 42 }
     entry.kind = .Directory
     entry.kind == sys.FileKind.Directory
     kinds: [sys.FileKind; 3] = [.Other, .File, .Directory]
-    var sum := 0
+    mut sum := 0
     for kind in kinds { sum = sum + i32(kind) }
     sum == 3
     sys.file_kind(sys.metadata(".")) == .Directory

@@ -43,7 +43,7 @@ fn ints_equal(a: &[]i32, b: &[]i32) -> bool {
 
 fn parse_nonneg_ascii(buf: &[]u8, start: i32, end: i32) -> i32 {
     if start >= end { return -1 }
-    var v: i64 = 0
+    mut v: i64 = 0
     for i in start..end {
         b := i32(buf[i])
         if b < 48 || b > 57 { return -1 }
@@ -59,30 +59,30 @@ fn parse_one_http_from_buf(buf: &mut []u8, is_head: bool, out: &mut HttpResp) ->
     if hdr_end < 0 { return 0 }
 
     first_crlf := bytes.find_crlf(&buf, 0, hdr_end)
-    var status_end := hdr_end
+    mut status_end := hdr_end
     if first_crlf >= 0 { status_end = first_crlf }
     sp1 := bytes.find_byte(&buf, 0, status_end, b' ')
     if sp1 < 0 || sp1 + 4 > status_end { return -1 }
-    var sp2 := bytes.find_byte(&buf, sp1 + 1, status_end, b' ')
+    mut sp2 := bytes.find_byte(&buf, sp1 + 1, status_end, b' ')
     if sp2 < 0 { sp2 = status_end }
     st_code := parse_nonneg_ascii(&buf, sp1 + 1, sp2)
     if st_code < 100 { return -1 }
 
-    var clen := 0
-    var ctype := ""
-    var conn_val := ""
+    mut clen := 0
+    mut ctype := ""
+    mut conn_val := ""
     if first_crlf >= 0 {
-        var line_start := first_crlf + 2
+        mut line_start := first_crlf + 2
         while line_start < hdr_end {
-            var line_end := bytes.find_crlf(&buf, line_start, hdr_end)
+            mut line_end := bytes.find_crlf(&buf, line_start, hdr_end)
             if line_end < 0 { line_end = hdr_end }
             colon := bytes.find_byte(&buf, line_start, line_end, b':')
             if colon < 0 { return -1 }
-            var val_start := colon + 1
+            mut val_start := colon + 1
             while val_start < line_end && (buf[val_start] == b' ' || buf[val_start] == b'\t') {
                 val_start += 1
             }
-            var val_end := line_end
+            mut val_end := line_end
             while val_end > val_start && (buf[val_end - 1] == b' ' || buf[val_end - 1] == b'\t') {
                 val_end -= 1
             }
@@ -102,12 +102,12 @@ fn parse_one_http_from_buf(buf: &mut []u8, is_head: bool, out: &mut HttpResp) ->
     }
 
     body_bytes := clen
-    var need_body := body_bytes
+    mut need_body := body_bytes
     if is_head { need_body = 0 }
     total_consumed := hdr_end + 4 + need_body
     if buf.len < total_consumed { return 0 }
 
-    var body: []u8 = []
+    mut body: []u8 = []
     if need_body > 0 {
         bytes.extend_range(&mut body, &buf, hdr_end + 4, total_consumed)
     }
@@ -124,8 +124,8 @@ fn parse_one_http_from_buf(buf: &mut []u8, is_head: bool, out: &mut HttpResp) ->
 }
 
 fn read_response(stream: &net.TcpStream, rx_buf: &mut []u8, is_head: bool, timeout_ms: i64) -> HttpResp {
-    var resp := empty_resp()
-    var ps := net.poll_set()
+    mut resp := empty_resp()
+    mut ps := net.poll_set()
     deadline := sys.now_ms() + timeout_ms
     while true {
         state := parse_one_http_from_buf(&mut rx_buf, is_head, &mut resp)
@@ -135,7 +135,7 @@ fn read_response(stream: &net.TcpStream, rx_buf: &mut []u8, is_head: bool, timeo
         if rem <= 0 { return empty_resp() }
         net.poll_clear(&mut ps)
         net.poll_add(&mut ps, net.stream_fd(&stream), net.poll_in())
-        var wait_ms := 200
+        mut wait_ms := 200
         if rem < i64(wait_ms) { wait_ms = i32(rem) }
         _ := net.poll(&mut ps, wait_ms)
         rd := net.read_append(&stream, &mut rx_buf, 65536)
@@ -152,17 +152,17 @@ fn read_response(stream: &net.TcpStream, rx_buf: &mut []u8, is_head: bool, timeo
 }
 
 fn send_raw(stream: &net.TcpStream, text_req: string) -> bool {
-    var raw: []u8 = []
+    mut raw: []u8 = []
     bytes.append_utf8(&mut raw, text_req)
     net.write_all(&stream, &raw).ok
 }
 
 fn launch_server(binary: string, work: string, doc_root: string, idle_ms: string, out_port: &mut i32) -> process.SpawnResult {
-    var cmd := process.command(binary, ["--host", "127.0.0.1", "--port", "0", "--dir", doc_root, "--idle-ms", idle_ms])
-    process.set_cwd(&mut cmd, work)
+    mut cmd := process.command(binary.clone(), ["--host", "127.0.0.1", "--port", "0", "--dir", doc_root.clone(), "--idle-ms", idle_ms.clone()])
+    process.set_cwd(&mut cmd, work.clone())
     sp := process.spawn(&cmd)
     if !sp.ok { return sp }
-    var child := sp.child
+    mut child := sp.child
     line := process.read_stdout_line(&mut child, 5000)
     if !line.ok || !text.starts_with(line.value, "LISTENING ") {
         _ := process.kill(&mut child)
@@ -179,30 +179,30 @@ fn launch_server(binary: string, work: string, doc_root: string, idle_ms: string
     process.SpawnResult { ok: true, child: child, error: 0 }
 }
 
-fn run_concurrent_keepalive_load(port: i32, workers: i32, reqs_per_worker: i32) -> bool {
-    var streams := net.stream_set()
+fn check_concurrent_keepalive(port: i32, workers: i32, reqs_per_worker: i32, benchmark: bool) -> bool {
+    mut streams := net.stream_set()
     defer { net.set_close_all(&mut streams) }
 
-    var req_even: []u8 = []
+    mut req_even: []u8 = []
     bytes.append_utf8(&mut req_even, "GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n")
-    var req_odd: []u8 = []
+    mut req_odd: []u8 = []
     bytes.append_utf8(&mut req_odd, "GET /sub/hello.txt HTTP/1.1\r\nHost: localhost\r\n\r\n")
 
-    var done_counts: []i32 = []
-    var tx_sent: []i32 = []
-    var rx_bufs_flat: []u8 = []
+    mut done_counts: []i32 = []
+    mut tx_sent: []i32 = []
+    mut rx_bufs_flat: []u8 = []
     stride := 4096
     rx_bufs_flat.reserve(workers * stride)
     for _ in 0..(workers * stride) { rx_bufs_flat.push(0) }
-    var rx_lens: []i32 = []
-    var req_started_ms: []i64 = []
-    var latencies_ms: []i64 = []
-    latencies_ms.reserve(workers * reqs_per_worker)
+    mut rx_lens: []i32 = []
+    mut req_started_ms: []i64 = []
+    mut latencies_ms: []i64 = []
+    if benchmark { latencies_ms.reserve(workers * reqs_per_worker) }
 
     for _ in 0..workers {
         c := net.connect(net.loopback(), port)
         if !c.ok { return common.fail("concurrent client connect failed") }
-        var s := c.stream
+        mut s := c.stream
         _ := net.set_nodelay(&s, true)
         _ := net.set_nonblocking(&s, true)
         slot := net.set_insert(&mut streams, &mut s)
@@ -210,30 +210,30 @@ fn run_concurrent_keepalive_load(port: i32, workers: i32, reqs_per_worker: i32) 
         done_counts.push(0)
         tx_sent.push(0)
         rx_lens.push(0)
-        req_started_ms.push(sys.now_ms())
+        if benchmark { req_started_ms.push(sys.now_ms()) }
     }
 
     t_start := sys.now_ms()
     deadline := t_start + 15000
-    var completed_workers := 0
-    var ps := net.poll_set()
-    var scratch: []u8 = []
-    var single_buf: []u8 = []
+    mut completed_workers := 0
+    mut ps := net.poll_set()
+    mut scratch: []u8 = []
+    mut single_buf: []u8 = []
 
     while completed_workers < workers {
         now := sys.now_ms()
-        if now > deadline { return common.fail("concurrent keep-alive benchmark timed out") }
+        if now > deadline { return common.fail("concurrent keep-alive requests timed out") }
 
         net.poll_clear(&mut ps)
-        var slot_map: []i32 = []
+        mut slot_map: []i32 = []
         for w in 0..workers {
             if done_counts[w] >= reqs_per_worker { continue }
-            var want := net.poll_in()
-            var target_len := req_even.len
+            mut want := net.poll_in()
+            mut target_len := req_even.len
             if done_counts[w] % 2 == 1 { target_len = req_odd.len }
             if tx_sent[w] < target_len {
-                if tx_sent[w] == 0 { req_started_ms[w] = now }
-                var wr := net.IoResult { ok: false, would_block: false, eof: false, count: 0, error: 0 }
+                if benchmark && tx_sent[w] == 0 { req_started_ms[w] = now }
+                mut wr := net.IoResult { ok: false, would_block: false, eof: false, count: 0, error: 0 }
                 if done_counts[w] % 2 == 0 {
                     wr = net.set_write_range(&streams, w, &req_even, tx_sent[w], target_len - tx_sent[w])
                 } else {
@@ -252,7 +252,8 @@ fn run_concurrent_keepalive_load(port: i32, workers: i32, reqs_per_worker: i32) 
         if slot_map.len == 0 { break }
 
         _ := net.poll(&mut ps, 50)
-        now_after := sys.now_ms()
+        mut now_after: i64 = 0
+        if benchmark { now_after = sys.now_ms() }
         for pi in 0..slot_map.len {
             if ps.revents[pi] == 0 { continue }
             w := slot_map[pi]
@@ -268,7 +269,7 @@ fn run_concurrent_keepalive_load(port: i32, workers: i32, reqs_per_worker: i32) 
 
                     single_buf.clear()
                     bytes.extend_range(&mut single_buf, &rx_bufs_flat, base, base + rx_lens[w])
-                    var parsed := empty_resp()
+                    mut parsed := empty_resp()
                     st := parse_one_http_from_buf(&mut single_buf, false, &mut parsed)
                     if st < 0 { return common.fail("malformed response during concurrent load") }
                     if st == 1 {
@@ -286,7 +287,7 @@ fn run_concurrent_keepalive_load(port: i32, workers: i32, reqs_per_worker: i32) 
                         for k in 0..single_buf.len {
                             rx_bufs_flat[base + k] = single_buf[k]
                         }
-                        latencies_ms.push(now_after - req_started_ms[w])
+                        if benchmark { latencies_ms.push(now_after - req_started_ms[w]) }
                         done_counts[w] += 1
                         tx_sent[w] = 0
                         if done_counts[w] == reqs_per_worker {
@@ -300,18 +301,22 @@ fn run_concurrent_keepalive_load(port: i32, workers: i32, reqs_per_worker: i32) 
         }
     }
 
-    var elapsed_ms := sys.now_ms() - t_start
-    if elapsed_ms <= 0 { elapsed_ms = 1 }
-    total_reqs := i64(workers * reqs_per_worker)
-    rps := (total_reqs * 1000) / elapsed_ms
-    array.sort(&mut latencies_ms)
-    med_ms := latencies_ms[latencies_ms.len / 2]
-    p95_ms := latencies_ms[(latencies_ms.len * 95) / 100]
-    print("PASS concurrency & throughput: " + total_reqs.str() + " reqs across " + workers.str() + " clients in " + elapsed_ms.str() + "ms (" + rps.str() + " req/s, median=" + med_ms.str() + "ms, p95=" + p95_ms.str() + "ms)")
+    if benchmark {
+        mut elapsed_ms := sys.now_ms() - t_start
+        if elapsed_ms <= 0 { elapsed_ms = 1 }
+        total_reqs := i64(workers * reqs_per_worker)
+        rps := (total_reqs * 1000) / elapsed_ms
+        array.sort(&mut latencies_ms)
+        med_ms := latencies_ms[latencies_ms.len / 2]
+        p95_ms := latencies_ms[(latencies_ms.len * 95) / 100]
+        print("PASS concurrency & throughput: " + total_reqs.str() + " reqs across " + workers.str() + " clients in " + elapsed_ms.str() + "ms (" + rps.str() + " req/s, median=" + med_ms.str() + "ms, p95=" + p95_ms.str() + "ms)")
+    } else {
+        print("PASS concurrency: " + (workers * reqs_per_worker).str() + " responses across " + workers.str() + " clients")
+    }
     true
 }
 
-pub fn run_suite(compiler: string, root: string) -> bool {
+pub fn run_suite_mode(compiler: string, root: string, benchmark: bool) -> bool {
     http_dir := root + "/http"
     tmp := fs.temp_dir("dunder-http-test-")
     if !tmp.ok { return common.fail("temp_dir failed") }
@@ -319,7 +324,7 @@ pub fn run_suite(compiler: string, root: string) -> bool {
     defer { _ := fs.remove_all(work) }
 
     binary := work + "/dunder-http"
-    build_res := process.run_in(compiler, ["build", http_dir + "/src/main.ddr", "-o", binary], http_dir)
+    build_res := process.run_in(compiler, ["build", http_dir + "/src/main.ddr", "-o", binary.clone()], http_dir)
     if build_res.stdout.len > 0 { print(text.trim(process.stdout_text(&build_res))) }
     if !process.succeeded(&build_res) {
         return common.fail("failed building dunder-http: " + process.stderr_text(&build_res))
@@ -332,9 +337,9 @@ pub fn run_suite(compiler: string, root: string) -> bool {
     if !sys.write_text(work + "/secret.txt", "TOP_SECRET_MUST_NEVER_ESCAPE").ok { return false }
 
     // 512 KiB pseudo-random binary payload + reference SHA-256
-    var large_bytes: []u8 = []
+    mut large_bytes: []u8 = []
     large_bytes.reserve(524288)
-    var state_rng: u64 = 20261114
+    mut state_rng: u64 = 20261114
     for _ in 0..524288 {
         state_rng = state_rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
         large_bytes.push(u8(state_rng.shr(56).bit_and(255)))
@@ -342,10 +347,10 @@ pub fn run_suite(compiler: string, root: string) -> bool {
     large_sha := sha256.digest_bytes(&large_bytes)
     if !sys.write_u8(doc_root + "/large.bin", &large_bytes).ok { return common.fail("failed writing large.bin") }
 
-    var port := 0
+    mut port := 0
     sp := launch_server(binary, work, doc_root, "5000", &mut port)
     if !sp.ok { return common.fail("dunder-http failed to launch and announce LISTENING") }
-    var server := sp.child
+    mut server := sp.child
     defer {
         _ := process.terminate(&mut server)
         _ := process.wait(&mut server, 5000)
@@ -355,11 +360,11 @@ pub fn run_suite(compiler: string, root: string) -> bool {
     {
         c1 := net.connect(net.loopback(), port)
         if !c1.ok { return common.fail("connect failed") }
-        var s := c1.stream
+        mut s := c1.stream
         defer { _ := net.close(&mut s) }
         _ := net.set_nodelay(&s, true)
         _ := net.set_nonblocking(&s, true)
-        var rx: []u8 = []
+        mut rx: []u8 = []
 
         if !send_raw(&s, "GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n") { return false }
         r1 := read_response(&s, &mut rx, false, 5000)
@@ -373,10 +378,10 @@ pub fn run_suite(compiler: string, root: string) -> bool {
             return common.fail("HEAD /healthz failed")
         }
 
-        var echo_payload: []u8 = []
+        mut echo_payload: []u8 = []
         for b in 0..256 { echo_payload.push(u8(b)) }
         bytes.append_utf8(&mut echo_payload, "\r\n\r\nPOST /fake HTTP/1.1\r\n\r\n")
-        var post_req: []u8 = []
+        mut post_req: []u8 = []
         bytes.append_utf8(&mut post_req, "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/x-test\r\nContent-Length: " + echo_payload.len.str() + "\r\n\r\n")
         bytes.extend(&mut post_req, &echo_payload)
         if !net.write_all(&s, &post_req).ok { return false }
@@ -422,10 +427,10 @@ pub fn run_suite(compiler: string, root: string) -> bool {
     for bp in bad_paths {
         c := net.connect(net.loopback(), port)
         if !c.ok { return common.fail("connect failed for traversal check") }
-        var s := c.stream
+        mut s := c.stream
         defer { _ := net.close(&mut s) }
         _ := net.set_nonblocking(&s, true)
-        var rx: []u8 = []
+        mut rx: []u8 = []
         if !send_raw(&s, "GET " + bp + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n") { return false }
         resp := read_response(&s, &mut rx, false, 5000)
         if !resp.ok || (resp.status != 400 && resp.status != 404) {
@@ -440,11 +445,11 @@ pub fn run_suite(compiler: string, root: string) -> bool {
     {
         c := net.connect(net.loopback(), port)
         if !c.ok { return common.fail("connect failed for pipelining") }
-        var s := c.stream
+        mut s := c.stream
         defer { _ := net.close(&mut s) }
         _ := net.set_nodelay(&s, true)
         _ := net.set_nonblocking(&s, true)
-        var rx: []u8 = []
+        mut rx: []u8 = []
         for _ in 0..10 {
             if !send_raw(&s, "GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n") { return false }
             r := read_response(&s, &mut rx, false, 5000)
@@ -466,7 +471,7 @@ pub fn run_suite(compiler: string, root: string) -> bool {
         if !p3.ok || p3.status != 200 || bytes.decode(&p3.body).value != "hej från statisk fil\n" { return common.fail("pipeline 3 failed") }
         if !p4.ok || p4.status != 200 || p4.conn_hdr != "close" || rx.len != 0 { return common.fail("pipeline 4 failed") }
 
-        var ps := net.poll_set()
+        mut ps := net.poll_set()
         net.poll_add(&mut ps, net.stream_fd(&s), net.poll_in())
         _ := net.poll(&mut ps, 1000)
         eof_rd := net.read_append(&s, &mut rx, 16)
@@ -479,11 +484,11 @@ pub fn run_suite(compiler: string, root: string) -> bool {
     {
         c := net.connect(net.loopback(), port)
         if !c.ok { return common.fail("connect failed for fragmented request") }
-        var s := c.stream
+        mut s := c.stream
         defer { _ := net.close(&mut s) }
         _ := net.set_nodelay(&s, true)
         _ := net.set_nonblocking(&s, true)
-        var rx: []u8 = []
+        mut rx: []u8 = []
         if !send_raw(&s, "POST /ech") { return false }
         sys.sleep_ms(10)
         if !send_raw(&s, "o HTTP/1.1\r\nContent-Length: 5\r\n\r\nhe") { return false }
@@ -505,10 +510,10 @@ pub fn run_suite(compiler: string, root: string) -> bool {
     for i in 0..err_reqs.len {
         c := net.connect(net.loopback(), port)
         if !c.ok { return common.fail("connect failed for error status check") }
-        var s := c.stream
+        mut s := c.stream
         defer { _ := net.close(&mut s) }
         _ := net.set_nonblocking(&s, true)
-        var rx: []u8 = []
+        mut rx: []u8 = []
         if !send_raw(&s, err_reqs[i]) { return false }
         re := read_response(&s, &mut rx, false, 5000)
         if !re.ok || re.status != err_codes[i] {
@@ -516,17 +521,21 @@ pub fn run_suite(compiler: string, root: string) -> bool {
         }
     }
 
-    // 5. Concurrent keep-alive throughput benchmark: 16 clients x 100 requests = 1600 requests
-    if !run_concurrent_keepalive_load(port, 16, 100) { return false }
+    // 5. Default: bounded concurrency correctness. Measurements require --benchmark.
+    if benchmark {
+        if !check_concurrent_keepalive(port, 16, 100, true) { return false }
+    } else {
+        if !check_concurrent_keepalive(port, 8, 16, false) { return false }
+    }
 
     _ := process.terminate(&mut server)
     _ := process.wait(&mut server, 5000)
 
     // 6. Idle timeout disconnect test
-    var idle_port := 0
+    mut idle_port := 0
     sp_idle := launch_server(binary, work, doc_root, "250", &mut idle_port)
     if !sp_idle.ok { return common.fail("failed launching idle-timeout server") }
-    var idle_srv := sp_idle.child
+    mut idle_srv := sp_idle.child
     defer {
         _ := process.terminate(&mut idle_srv)
         _ := process.wait(&mut idle_srv, 5000)
@@ -534,13 +543,13 @@ pub fn run_suite(compiler: string, root: string) -> bool {
     {
         c := net.connect(net.loopback(), idle_port)
         if !c.ok { return common.fail("connect failed for idle timeout check") }
-        var s := c.stream
+        mut s := c.stream
         defer { _ := net.close(&mut s) }
         _ := net.set_nonblocking(&s, true)
-        var ps := net.poll_set()
+        mut ps := net.poll_set()
         net.poll_add(&mut ps, net.stream_fd(&s), net.poll_in())
         _ := net.poll(&mut ps, 2000)
-        var rx: []u8 = []
+        mut rx: []u8 = []
         rd := net.read_append(&s, &mut rx, 16)
         if !rd.ok || !rd.eof || rx.len != 0 {
             return common.fail("idle connection was not closed by server within timeout")
@@ -551,9 +560,13 @@ pub fn run_suite(compiler: string, root: string) -> bool {
     true
 }
 
+pub fn run_suite(compiler: string, root: string) -> bool {
+    run_suite_mode(compiler, root, false)
+}
+
 fn main() -> i32 {
-    cli := common.parse_cli(false)
+    cli := common.parse_http_cli()
     if !cli.ok { _ := sys.eprint(cli.error); return 2 }
-    if !run_suite(cli.compiler, cli.root) { return 1 }
+    if !run_suite_mode(cli.compiler, cli.root, cli.benchmark) { return 1 }
     0
 }

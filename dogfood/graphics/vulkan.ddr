@@ -45,12 +45,12 @@ unsafe fn copy_bytes(destination: ptr, source: ptr, bytes: usize) -> ptr
 unsafe fn clock_gettime(clock: i32, output: ptr) -> i32
 
 unsafe fn millis() -> i64 {
-    var t: [i64; 2] = [0, 0]
+    mut t: [i64; 2] = [0, 0]
     if clock_gettime(1, addr(&mut t[0])) != 0 { return 0 }
     t[0] * 1000 + t[1] / 1000000
 }
 
-fn open_error(message: string) -> OpenResult {
+fn open_error(move message: string) -> OpenResult {
     OpenResult { ok: false, window: Window {id: 0}, error: message }
 }
 
@@ -118,7 +118,7 @@ unsafe fn active(registry: &Registry, window: Window) -> ptr {
 }
 
 unsafe fn name(r: &state.Renderer) -> string {
-    var bytes: []i32 = []
+    mut bytes: []i32 = []
     for i in 0..256 {
         byte := r.properties.deviceName[i]
         if byte == 0 { break }
@@ -135,7 +135,7 @@ pub fn device_name(window: Window) -> string {
 }
 
 unsafe fn snapshot(r: &state.Renderer) -> []i32 {
-    var result: []i32 = []
+    mut result: []i32 = []
     if r.frames > 0 {
         count := r.width * r.height * 4
         result.reserve(count)
@@ -171,7 +171,7 @@ pub fn poll(window: Window) -> Frame {
     }
 }
 
-fn draw_error(frames: i64, message: string) -> DrawResult {
+fn draw_error(frames: i64, move message: string) -> DrawResult {
     DrawResult {ok: false, error: message, frames: frames}
 }
 unsafe fn submit(r: &mut state.Renderer, vertices: &[]f32, red: f64, green: f64, blue: f64) -> DrawResult {
@@ -252,7 +252,7 @@ pub fn quad(vertices: &mut []f32, x: f32, y: f32, width: f32, height: f32, color
 }
 
 @test fn geometry_emits_interleaved_triangle_lists() {
-    var vertices: []f32 = []
+    mut vertices: []f32 = []
     a := Point { x: -0.5, y: -0.5 }
     b := Point { x: 0.5, y: -0.5 }
     c := Point { x: 0.0, y: 0.5 }

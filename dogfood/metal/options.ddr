@@ -3,8 +3,8 @@ import std.parse as parse
 
 // Zero means interactive. A positive limit makes smoke runs self-terminating.
 pub fn frame_limit() -> i64 {
-    var limit: i64 = 0
-    var index := 1
+    mut limit: i64 = 0
+    mut index := 1
     while index < sys.arg_count() {
         argument := sys.arg(index)
         if argument == "--frames" {

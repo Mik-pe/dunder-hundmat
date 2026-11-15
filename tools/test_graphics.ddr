@@ -29,7 +29,7 @@ fn check_elf(image: &[]u8, machine: i32, interpreter: string) -> bool {
     if stride < 56 || table < 0 || table + count * stride > image.len {
         return common.fail("invalid ELF program header table bounds")
     }
-    var interp_count := 0
+    mut interp_count := 0
     for i in 0..count {
         off := table + i * stride
         kind := bytes.u32_le(&image, off)
@@ -51,14 +51,14 @@ fn check_elf(image: &[]u8, machine: i32, interpreter: string) -> bool {
     true
 }
 
-fn build_isolated(compiler: string, args: []string, work: string, expect_fail: bool, out_stderr: &mut string) -> bool {
-    var cmd := process.command(compiler, args)
-    process.set_cwd(&mut cmd, work)
+fn build_isolated(compiler: string, move args: []string, work: string, expect_fail: bool, out_stderr: &mut string) -> bool {
+    mut cmd := process.command(compiler.clone(), move args)
+    process.set_cwd(&mut cmd, work.clone())
     process.set_env(&mut cmd, "PATH", "/no-external-tools")
     process.set_timeout(&mut cmd, 60000)
     res := process.exec(&cmd)
     err_txt := process.stderr_text(&res)
-    out_stderr = err_txt
+    out_stderr = err_txt.clone()
     if text.find(err_txt, "VUID-") >= 0 || text.find(err_txt, "Validation Error") >= 0 {
         return common.fail("graphics validation error: " + err_txt)
     }
@@ -74,10 +74,10 @@ fn build_isolated(compiler: string, args: []string, work: string, expect_fail: b
     true
 }
 
-fn run_checked(program: string, args: []string, work: string, env_key: string, env_val: string, out_stdout: &mut string) -> bool {
-    var cmd := process.command(program, args)
-    process.set_cwd(&mut cmd, work)
-    if env_key.len > 0 { process.set_env(&mut cmd, env_key, env_val) }
+fn run_checked(program: string, move args: []string, work: string, env_key: string, env_val: string, out_stdout: &mut string) -> bool {
+    mut cmd := process.command(program.clone(), move args)
+    process.set_cwd(&mut cmd, work.clone())
+    if env_key.len > 0 { process.set_env(&mut cmd, env_key.clone(), env_val.clone()) }
     process.set_timeout(&mut cmd, 60000)
     res := process.exec(&cmd)
     err_txt := process.stderr_text(&res)
@@ -93,8 +93,8 @@ fn run_checked(program: string, args: []string, work: string, env_key: string, e
 
 fn check_webgpu(compiler: string, root: string, work: string) -> bool {
     wasm_out := work + "/webgpu.wasm"
-    var stderr := ""
-    if !build_isolated(compiler, ["build", root + "/dogfood/webgpu/main.ddr", "-o", wasm_out, "--target", "wasm32"], work, false, &mut stderr) {
+    mut stderr := ""
+    if !build_isolated(compiler, ["build", root + "/dogfood/webgpu/main.ddr", "-o", wasm_out.clone(), "--target", "wasm32"], work, false, &mut stderr) {
         return false
     }
     script := "import assert from 'node:assert/strict';\n" +
@@ -122,7 +122,7 @@ fn check_webgpu(compiler: string, root: string, work: string) -> bool {
         "assert.equal(draws, 1);\n"
     checker := work + "/check_webgpu.mjs"
     if !sys.write_text(checker, script).ok { return common.fail("failed writing check_webgpu.mjs") }
-    var stdout := ""
+    mut stdout := ""
     run_checked("node", [checker, wasm_out], work, "", "", &mut stdout)
 }
 
@@ -135,13 +135,13 @@ pub fn run_suite(compiler: string, root: string, live_graphics: bool) -> bool {
     triangle := root + "/dogfood/vulkan/triangle.ddr"
     metal := root + "/dogfood/metal/triangle.ddr"
     unexpected := work + "/unexpected"
-    var stderr := ""
+    mut stderr := ""
 
-    if !build_isolated(compiler, ["build", triangle, "-o", unexpected, "--target", "arm64-macos"], work, true, &mut stderr) { return false }
+    if !build_isolated(compiler, ["build", triangle.clone(), "-o", unexpected.clone(), "--target", "arm64-macos"], work, true, &mut stderr) { return false }
     if text.find(stderr, "requires the selected native platform") < 0 || sys.metadata(unexpected).ok {
         return common.fail("Vulkan build on macOS was not cleanly rejected")
     }
-    if !build_isolated(compiler, ["build", metal, "-o", unexpected, "--target", "arm64-linux"], work, true, &mut stderr) { return false }
+    if !build_isolated(compiler, ["build", metal.clone(), "-o", unexpected.clone(), "--target", "arm64-linux"], work, true, &mut stderr) { return false }
     if text.find(stderr, "requires the selected native platform") < 0 || sys.metadata(unexpected).ok {
         return common.fail("Metal build on Linux was not cleanly rejected")
     }
@@ -151,10 +151,10 @@ pub fn run_suite(compiler: string, root: string, live_graphics: bool) -> bool {
     interps: []string = ["/lib/ld-linux-aarch64.so.1", "/lib64/ld-linux-x86-64.so.2"]
     for i in 0..targets.len {
         out_path := work + "/" + targets[i]
-        if !build_isolated(compiler, ["build", triangle, "-o", out_path, "--target", targets[i]], work, false, &mut stderr) { return false }
+        if !build_isolated(compiler, ["build", triangle.clone(), "-o", out_path.clone(), "--target", targets[i].clone()], work, false, &mut stderr) { return false }
         first := sys.read_u8(out_path)
         if !first.ok || !check_elf(&first.value, machines[i], interps[i]) { return false }
-        if !build_isolated(compiler, ["build", triangle, "-o", out_path, "--target", targets[i]], work, false, &mut stderr) { return false }
+        if !build_isolated(compiler, ["build", triangle.clone(), "-o", out_path.clone(), "--target", targets[i].clone()], work, false, &mut stderr) { return false }
         second := sys.read_u8(out_path)
         if !second.ok || !bytes_equal(&first.value, &second.value) {
             return common.fail("non-deterministic ELF output for " + targets[i])
@@ -162,7 +162,7 @@ pub fn run_suite(compiler: string, root: string, live_graphics: bool) -> bool {
     }
 
     mac_app := work + "/Triangle.app"
-    if !build_isolated(compiler, ["build", metal, "-o", mac_app, "--target", "arm64-macos", "--app"], work, false, &mut stderr) { return false }
+    if !build_isolated(compiler, ["build", metal.clone(), "-o", mac_app.clone(), "--target", "arm64-macos", "--app"], work, false, &mut stderr) { return false }
     plist := sys.read_text(mac_app + "/Contents/Info.plist")
     if !plist.ok || text.find(plist.value, "<key>CFBundleExecutable</key>") < 0 || text.find(plist.value, "<string>Triangle</string>") < 0 {
         return common.fail("Triangle.app Info.plist missing CFBundleExecutable=Triangle")
@@ -176,9 +176,9 @@ pub fn run_suite(compiler: string, root: string, live_graphics: bool) -> bool {
     print("PASS graphics: Vulkan ELF cross-builds, Metal .app bundle, and WebGPU Wasm module")
 
     if live_graphics {
-        var stdout := ""
+        mut stdout := ""
         if process.host_os() == "macos" {
-            if !run_checked("/usr/bin/codesign", ["--verify", "--strict", mac_app], work, "", "", &mut stdout) { return false }
+            if !run_checked("/usr/bin/codesign", ["--verify", "--strict", mac_app.clone()], work, "", "", &mut stdout) { return false }
             if !run_checked(mac_app + "/Contents/MacOS/Triangle", ["--frames", "3"], work, "MTL_DEBUG_LAYER", "1", &mut stdout) { return false }
             if text.trim(stdout) != "triangle frames=3" { return common.fail("unexpected Triangle output: " + stdout) }
 
@@ -186,10 +186,10 @@ pub fn run_suite(compiler: string, root: string, live_graphics: bool) -> bool {
             expected: []string = ["atlas frames=3", "lifecycle cycles=3", "native event sequence ok"]
             for i in 0..names.len {
                 out_bin := work + "/" + names[i]
-                if !build_isolated(compiler, ["build", root + "/dogfood/metal/" + names[i] + ".ddr", "-o", out_bin], work, false, &mut stderr) { return false }
-                var run_args: []string = []
+                if !build_isolated(compiler, ["build", root + "/dogfood/metal/" + names[i] + ".ddr", "-o", out_bin.clone()], work, false, &mut stderr) { return false }
+                mut run_args: []string = []
                 if names[i] == "main" { run_args = ["--frames", "3"] }
-                if !run_checked(out_bin, run_args, work, "MTL_DEBUG_LAYER", "1", &mut stdout) { return false }
+                if !run_checked(out_bin, move run_args, work, "MTL_DEBUG_LAYER", "1", &mut stdout) { return false }
                 if text.trim(stdout) != expected[i] {
                     return common.fail(names[i] + " output mismatch: " + stdout)
                 }
@@ -200,15 +200,15 @@ pub fn run_suite(compiler: string, root: string, live_graphics: bool) -> bool {
             expected: []string = ["triangle frames=3", "atlas frames=3", "lifecycle cycles=3", "pixels ok", "SDL surface and events ok"]
             for i in 0..names.len {
                 out_bin := work + "/" + names[i]
-                if !build_isolated(compiler, ["build", root + "/dogfood/vulkan/" + names[i] + ".ddr", "-o", out_bin], work, false, &mut stderr) { return false }
-                var run_args: []string = []
+                if !build_isolated(compiler, ["build", root + "/dogfood/vulkan/" + names[i] + ".ddr", "-o", out_bin.clone()], work, false, &mut stderr) { return false }
+                mut run_args: []string = []
                 if names[i] == "triangle" || names[i] == "main" {
                     run_args = ["--headless", "--frames", "3"]
                 }
-                var env_k := ""
-                var env_v := ""
+                mut env_k := ""
+                mut env_v := ""
                 if names[i] == "events" { env_k = "SDL_VIDEODRIVER"; env_v = "dummy" }
-                if !run_checked(out_bin, run_args, work, env_k, env_v, &mut stdout) { return false }
+                if !run_checked(out_bin, move run_args, work, env_k, env_v, &mut stdout) { return false }
                 lines := text.split(text.trim(stdout), "\n")
                 if lines.len == 0 || lines[lines.len - 1] != expected[i] {
                     return common.fail(names[i] + " output mismatch: " + stdout)

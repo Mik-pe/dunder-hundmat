@@ -183,7 +183,7 @@ Biblioteket bygger denna representation med vanliga Dunder-funktioner:
 En triangel behöver bara detta:
 
 ```dunder
-var vertices: []f32 = []
+mut vertices: []f32 = []
 macos.gradient_triangle(&mut vertices,
     macos.Point { x: 0.0, y: 0.7 },
     macos.Point { x: -0.7, y: -0.6 },

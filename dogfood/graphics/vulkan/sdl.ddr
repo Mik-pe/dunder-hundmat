@@ -35,7 +35,7 @@ pub struct Window {
 unsafe fn load(w: &mut Window) -> bool {
     w.library = dl.open(cstr("libSDL2-2.0.so.0"), 2)
     if w.library == ptr(0) { return false }
-    var symbol := ptr(0)
+    mut symbol := ptr(0)
     symbol = dl.symbol(w.library, cstr("SDL_InitSubSystem"))
     if symbol == ptr(0) { return false }
     w.InitSubSystem = ffi_fn(symbol)
@@ -80,7 +80,7 @@ unsafe fn load(w: &mut Window) -> bool {
 
 pub unsafe fn open(w: &mut Window, title: string, width: i32, height: i32) -> bool {
     if title.len > 4095 { return false }
-    var name: []u8 = []
+    mut name: []u8 = []
     name.reserve(title.len + 1)
     for byte in title.bytes() {
         if byte == 0 { return false }
@@ -111,7 +111,7 @@ pub unsafe fn poll(w: &mut Window) {
     if w.closed != 0 { return }
     // SDL_Event is a tagged 56-byte union on 64-bit targets. One control
     // event per frame preserves key and button transitions for the caller.
-    var event: [u64; 7] = [0; 7]
+    mut event: [u64; 7] = [0; 7]
     base := addr(&mut event[0])
     for i in 0..256 {
         if w.PollEvent(base) == 0 { break }
@@ -142,7 +142,7 @@ pub unsafe fn present(w: &Window, pixels: ptr, width: i32, height: i32) -> bool 
     if surface == ptr(0) { return false }
     image := w.CreateRGBSurfaceFrom(pixels, width, height, 32, width * 4, 255, 65280, 16711680, 4278190080)
     if image == ptr(0) { return false }
-    var ok := w.SetSurfaceBlendMode(image, 0) == 0
+    mut ok := w.SetSurfaceBlendMode(image, 0) == 0
     if ok { ok = w.UpperBlitScaled(image, ptr(0), surface, ptr(0)) == 0 }
     w.FreeSurface(image)
     ok && w.UpdateWindowSurface(w.handle) == 0

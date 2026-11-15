@@ -6,11 +6,11 @@ fn main() {
     limit := options.frame_limit()
     opened := macos.open("Dunder / Kinetic Atlas - drag sculpture | Space pause | C color | R reset | Esc close", 1100, 740)
     if !opened.ok { print(opened.error); assert(false) }
-    var state := scene.initial()
-    var vertices: []f32 = []
+    mut state := scene.initial()
+    mut vertices: []f32 = []
     vertices.reserve(40000)
-    var frames: i64 = 0
-    var running := true
+    mut frames: i64 = 0
+    mut running := true
     while running {
         frame := macos.poll(opened.window)
         if frame.closed || frame.key == 53 { running = false }

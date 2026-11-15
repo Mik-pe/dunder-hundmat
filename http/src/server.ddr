@@ -139,9 +139,9 @@ fn dispatch_request(
 
     if bytes.equals_text(&rx_slab, req.path_start, req.path_end, "/stats") {
         if is_get || is_head {
-            var jbuf: []u8 = []
+            mut jbuf: []u8 = []
             jbuf.reserve(96)
-            var first := json.begin_obj(&mut jbuf)
+            mut first := json.begin_obj(&mut jbuf)
             json.field_i64(&mut jbuf, &mut first, "requests", requests_served)
             json.field_i64(&mut jbuf, &mut first, "active_connections", i64(active_conns))
             json.field_i64(&mut jbuf, &mut first, "uptime_ms", uptime_ms)
@@ -156,7 +156,7 @@ fn dispatch_request(
 
     if bytes.equals_text(&rx_slab, req.path_start, req.path_end, "/echo") {
         if is_post {
-            var ct := "application/octet-stream"
+            mut ct := "application/octet-stream"
             if req.ct_end > req.ct_start {
                 decoded := bytes.decode_range(&rx_slab, req.ct_start, req.ct_end)
                 if decoded.ok { ct = decoded.value }
@@ -180,14 +180,12 @@ fn process_rx(
     slot: i32,
     now: i64,
     config: &ServerConfig,
-    doc_root: &fs.ReadDir,
     rx_slab: &[]u8,
     tx_scratch: &mut []u8,
     tx_arena: &mut []u8,
     streams: &mut net.StreamSet,
     state: &mut ConnState,
 ) {
-    _ := doc_root
     if state.active[slot] == 0 || state.tx_off[slot] < state.tx_end[slot] { return }
     slot_base := slot * rx_stride()
 
@@ -249,10 +247,10 @@ fn read_slot(
     state: &mut ConnState,
 ) -> i32 {
     slot_base := slot * rx_stride()
-    var saw_eof := false
+    mut saw_eof := false
 
     for _ in 0..4 {
-        var used := state.rx_len[slot]
+        mut used := state.rx_len[slot]
         if state.rx_pos[slot] > 0 && (state.rx_pos[slot] == used || rx_stride() - used < 4096) {
             if state.rx_pos[slot] >= used {
                 state.rx_pos[slot] = 0
@@ -272,7 +270,7 @@ fn read_slot(
 
         avail := rx_stride() - used
         if avail <= 0 { return 2 }
-        var chunk := 32768
+        mut chunk := 32768
         if avail < chunk { chunk = avail }
 
         io_scratch.clear()
@@ -301,7 +299,6 @@ fn drain_tx(
     slot: i32,
     now: i64,
     config: &ServerConfig,
-    doc_root: &fs.ReadDir,
     rx_slab: &[]u8,
     tx_scratch: &mut []u8,
     tx_arena: &mut []u8,
@@ -310,7 +307,7 @@ fn drain_tx(
 ) {
     while state.tx_off[slot] < state.tx_end[slot] {
         rem := state.tx_end[slot] - state.tx_off[slot]
-        var chunk := 65536
+        mut chunk := 65536
         if rem < chunk { chunk = rem }
         wr := net.set_write_range(&streams, slot, &tx_arena, state.tx_off[slot], chunk)
         if !wr.ok {
@@ -333,7 +330,7 @@ fn drain_tx(
             return
         }
         if state.rx_pos[slot] < state.rx_len[slot] {
-            process_rx(slot, now, &config, &doc_root, &rx_slab, &mut tx_scratch, &mut tx_arena, &mut streams, &mut state)
+            process_rx(slot, now, &config, &rx_slab, &mut tx_scratch, &mut tx_arena, &mut streams, &mut state)
         }
     }
 }
@@ -352,7 +349,7 @@ fn accept_pending(
             if ares.would_block { break }
             break
         }
-        var client := ares.stream
+        mut client := ares.stream
         if state.active_conns >= max_conns() {
             unused_w := net.write_range(&client, &busy_reply, 0, busy_reply.len)
             unused_c := net.close(&mut client)
@@ -378,7 +375,7 @@ pub fn serve(config: ServerConfig) -> ServerStats {
     if !lres.ok {
         return ServerStats { ok: false, error: lres.error, port: 0, requests_served: 0 }
     }
-    var listener := lres.listener
+    mut listener := lres.listener
     defer { unused_l := net.close_listener(&mut listener) }
 
     st_nb := net.set_listener_nonblocking(&listener, true)
@@ -390,20 +387,19 @@ pub fn serve(config: ServerConfig) -> ServerStats {
         print("LISTENING " + bound_port.str())
     }
 
-    var streams := net.stream_set()
+    mut streams := net.stream_set()
     defer { net.set_close_all(&mut streams) }
-    var pollset := net.poll_set()
-    var poll_slots: []i32 = []
+    mut pollset := net.poll_set()
+    mut poll_slots: []i32 = []
 
-    var rx_slab: []u8 = []
-    var tx_arena: []u8 = []
-    var tx_scratch: []u8 = []
-    var io_scratch: []u8 = []
-    var busy_reply: []u8 = []
+    mut rx_slab: []u8 = []
+    mut tx_arena: []u8 = []
+    mut tx_scratch: []u8 = []
+    mut io_scratch: []u8 = []
+    mut busy_reply: []u8 = []
     response.write_error(&mut busy_reply, 503, false, false)
 
-    doc_root := config.doc_root
-    var state := ConnState {
+    mut state := ConnState {
         active: [],
         rx_pos: [],
         rx_len: [],
@@ -429,7 +425,7 @@ pub fn serve(config: ServerConfig) -> ServerStats {
 
         for slot in 0..state.active.len {
             if state.active[slot] != 0 {
-                var want := net.poll_in()
+                mut want := net.poll_in()
                 if state.tx_off[slot] < state.tx_end[slot] {
                     want = net.poll_out()
                 }
@@ -438,9 +434,9 @@ pub fn serve(config: ServerConfig) -> ServerStats {
             }
         }
 
-        var timeout_ms := -1
+        mut timeout_ms := -1
         if config.idle_timeout_ms > 0 && state.active_conns > 0 {
-            var q := i32(config.idle_timeout_ms / 4)
+            mut q := i32(config.idle_timeout_ms / 4)
             if q > 200 { q = 200 }
             if q < 10 { q = 10 }
             timeout_ms = q
@@ -470,7 +466,7 @@ pub fn serve(config: ServerConfig) -> ServerStats {
 
             if state.tx_off[slot] < state.tx_end[slot] {
                 if rev.bit_and(net.poll_out()) != 0 {
-                    drain_tx(slot, now, &config, &doc_root, &rx_slab, &mut tx_scratch, &mut tx_arena, &mut streams, &mut state)
+                    drain_tx(slot, now, &config, &rx_slab, &mut tx_scratch, &mut tx_arena, &mut streams, &mut state)
                 }
                 if rev.bit_and(net.poll_hup()) != 0 && state.active[slot] != 0 && state.tx_off[slot] >= state.tx_end[slot] {
                     close_conn(slot, &mut state, &mut streams, &mut tx_arena)
@@ -493,7 +489,7 @@ pub fn serve(config: ServerConfig) -> ServerStats {
                     }
                     continue
                 }
-                process_rx(slot, now, &config, &doc_root, &rx_slab, &mut tx_scratch, &mut tx_arena, &mut streams, &mut state)
+                process_rx(slot, now, &config, &rx_slab, &mut tx_scratch, &mut tx_arena, &mut streams, &mut state)
                 if state.active[slot] != 0 && state.tx_off[slot] >= state.tx_end[slot] {
                     if rstatus == 3 || rev.bit_and(net.poll_hup()) != 0 {
                         close_conn(slot, &mut state, &mut streams, &mut tx_arena)

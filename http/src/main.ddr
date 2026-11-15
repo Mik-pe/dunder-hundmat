@@ -16,14 +16,14 @@ fn fail(msg: string, code: i32) -> i32 {
 }
 
 fn main() -> i32 {
-    var host := net.loopback()
-    var port := 8080
-    var dir_path := ""
-    var idle_ms: i64 = 5000
-    var max_requests: i64 = 0
+    mut host := net.loopback()
+    mut port := 8080
+    mut dir_path := ""
+    mut idle_ms: i64 = 5000
+    mut max_requests: i64 = 0
 
     argc := sys.arg_count()
-    var i := 1
+    mut i := 1
     while i < argc {
         arg := sys.arg(i)
         if arg == "--help" || arg == "-h" {
@@ -64,7 +64,7 @@ fn main() -> i32 {
         }
     }
 
-    var has_doc_root := false
+    mut has_doc_root := false
     if dir_path.len > 0 {
         info := sys.metadata(dir_path)
         if !info.ok || !info.is_dir {
@@ -77,7 +77,7 @@ fn main() -> i32 {
         host: host,
         port: port,
         has_doc_root: has_doc_root,
-        doc_root: fs.grant_dir(dir_path),
+        doc_root: fs.grant_dir(move dir_path),
         idle_timeout_ms: idle_ms,
         max_requests: max_requests,
         announce_listening: true,

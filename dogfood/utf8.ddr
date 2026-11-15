@@ -5,7 +5,7 @@ struct Message { body: string, marker: rune }
 @test {
     (Message { body: "Hej 🌍", marker: `🌍` }) -> "🌍 Hej världen"
     original := "åäö 🌍"
-    var changed := original
+    mut changed := original.clone()
     snapshot := changed.runes()
     changed = "new"
     snapshot[4] == `🌍`

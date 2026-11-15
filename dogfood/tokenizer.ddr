@@ -14,8 +14,8 @@ fn punctuation(r: rune) -> bool {
     ("日本語 + κόσμος") -> "日本語|+|κόσμος"
 }
 pub fn tokenize(source: string) -> string {
-    var result := ""
-    var index := 0
+    mut result := ""
+    mut index := 0
     while index < source.len {
         r := text.rune_at(source, index)
         width := text.width_at(source, index)
@@ -23,7 +23,7 @@ pub fn tokenize(source: string) -> string {
         start := index
         index = index + width
         if r == `"` {
-            var closed := false
+            mut closed := false
             while index < source.len {
                 next := text.rune_at(source, index)
                 index = index + text.width_at(source, index)

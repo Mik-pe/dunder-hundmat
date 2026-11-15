@@ -28,7 +28,7 @@ pub unsafe fn setup(s: &mut State) -> bool {
     if s.device == ptr(0) { return false }
     s.queue = o.get(s.device, cstr("newCommandQueue"))
     if s.queue == ptr(0) { return false }
-    var error := ptr(0)
+    mut error := ptr(0)
     library := o.three_objects(s.device, cstr("newLibraryWithSource:options:error:"), shader_source(), ptr(0), addr(&mut error))
     if library == ptr(0) { return false }
     vertex := o.get_object(library, cstr("newFunctionWithName:"), o.named_string(cstr("vertex_main")))
@@ -90,7 +90,7 @@ pub unsafe fn render(s: &mut State) -> bool {
 }
 
 pub unsafe fn upload(s: &mut State, data: &[]f32, red: f64, green: f64, blue: f64) -> bool {
-    var next := ptr(0)
+    mut next := ptr(0)
     if data.len != 0 {
         next = o.buffer(s.device, cstr("newBufferWithBytes:length:options:"), addr(&data[0]), usize(data.len) * 4, 0)
         if next == ptr(0) { return false }

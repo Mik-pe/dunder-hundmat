@@ -2,9 +2,9 @@ import math
 import ode
 
 fn bisect(function: fn(f64) -> f64, start: f64, end: f64) -> f64 {
-    var low := start
-    var high := end
-    var low_value := function(low)
+    mut low := start
+    mut high := end
+    mut low_value := function(low)
     high_value := function(high)
     assert(low.is_finite() && high.is_finite() && low < high)
     assert((low_value <= 0.0 && high_value >= 0.0) || (low_value >= 0.0 && high_value <= 0.0))

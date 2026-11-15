@@ -56,11 +56,16 @@ På macOS är standardkatalogen `build/arm64-macos`; på ARM64/Linux är den
 `sys.read_text` begränsar indata till 4 MiB UTF-8. CSV läses en post åt gången
 från den inlästa texten. Grupper och ackumulerade summor lever tills rapporten skrivits. Tabell är ännu inget verktyg för stora dataflöden.
 
-Projektet provar punktseparerade modulnamn utan citattecken, mutable borrows,
-structreturer med dynamiska fält, UTF-8-bytebuffertar, map, strängsortering,
+Projektet provar punktseparerade modulnamn utan citattecken, `&mut`-skrivlån,
+flyttreturer med dynamiska fält, UTF-8-bytebuffertar, map, strängsortering,
 programargument, fil-I/O och separata stdout/stderr. Parserns och rapportens
 taggade tester finns nära funktionerna. Kompilatorns integrationstest
 [`tools/test_tabell.ddr`](../tools/test_tabell.ddr) jämför dessutom riktiga CLI-körningar med en oberoende referens.
+
+Vanliga parametrar lånar för läsning. CSV-läsaren behåller en uttrycklig
+strängklon av indatan; den delar oföränderliga UTF-8-data. Radernas fältarrayer
+flyttas till returvärdet. Sorteringen uppdaterar rapportens egen nyckelarray
+genom `&mut`, och inga arraykopior behövs för vanliga hjälpanrop.
 
 Tabell byggs också av den självbyggda Dunder-kompilatorn.
 Stage 3 kompilerar projektet till ARM64/Linux; binären körs under QEMU och

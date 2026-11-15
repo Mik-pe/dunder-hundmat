@@ -12,7 +12,7 @@ fn main() {
     assert(!info.closed && info.width == 64 && info.height == 48)
     assert(info.pixel_width == 64 && info.pixel_height == 48 && info.scale == 1.0)
 
-    var vertices: []f32 = []
+    mut vertices: []f32 = []
     first := vk.draw(window, &vertices, 0.0, 0.0, 1.0)
     assert(first.ok && first.frames == 1)
     before := vk.pixels(window)
@@ -27,7 +27,7 @@ fn main() {
     second := vk.draw(window, &vertices, 0.0, 0.0, 1.0)
     assert(second.ok && second.frames == 2)
     assert(vertices.len == 48 && vertices[0] == -1.0)
-    var rgba := vk.pixels(window)
+    mut rgba := vk.pixels(window)
     top := (8 * 64 + 32) * 4
     bottom := (40 * 64 + 32) * 4
     assert(rgba[top] >= 127 && rgba[top] <= 128 && rgba[top + 1] == 0)

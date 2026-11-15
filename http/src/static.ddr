@@ -27,7 +27,7 @@ pub fn mime_type(path: string) -> string {
 }
 
 pub fn serve(dir: &fs.ReadDir, buf: &[]u8, path_start: i32, path_end: i32, is_head: bool, keep_alive: bool, out: &mut []u8) {
-    var rel := "index.html"
+    mut rel := "index.html"
     if path_end - path_start > 1 {
         decoded := bytes.decode_range(&buf, path_start + 1, path_end)
         if !decoded.ok {

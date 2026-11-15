@@ -7,12 +7,12 @@ import std.parse
 pub struct Report { ok: bool, output: string, line: i32, error: string }
 
 fn invalid(line: i32, message: string) -> Report {
-    Report { ok: false, output: "", line: line, error: message }
+    Report { ok: false, output: "", line: line, error: message.clone() }
 }
 
 fn decimal(value: string) -> parse.Integer {
     if value.len == 0 { return parse.Integer { ok: false, value: 0, error: 1 } }
-    var start := 0
+    mut start := 0
     if value[0] == 43 || value[0] == 45 { start = 1 }
     if start == value.len { return parse.Integer { ok: false, value: 0, error: 1 } }
     for i in start..value.len {
@@ -30,15 +30,15 @@ fn fits(left: i64, right: i64) -> bool {
 }
 
 pub fn summarize(source: string, group_column: string, sum_column: string) -> Report {
-    var input := csv.reader(source)
+    mut input := csv.reader(source)
     header := csv.next(&mut input)
     if !header.ok { return invalid(header.line, header.error) }
     if header.done { return invalid(1, "CSV header is missing") }
-    var seen := map.new()
-    var group_index := -1
-    var sum_index := -1
+    mut seen := map.new()
+    mut group_index := -1
+    mut sum_index := -1
     for i in 0..header.fields.len {
-        name := header.fields[i]
+        name := header.fields[i].clone()
         if name.len == 0 { return invalid(1, "empty column name") }
         if map.contains(&seen, name) { return invalid(1, "duplicate column: " + name) }
         map.put(&mut seen, name, i64(i))
@@ -47,7 +47,7 @@ pub fn summarize(source: string, group_column: string, sum_column: string) -> Re
     }
     if group_index < 0 { return invalid(1, "column not found: " + group_column) }
     if sum_index < 0 { return invalid(1, "column not found: " + sum_column) }
-    var totals := map.new()
+    mut totals := map.new()
     while true {
         row := csv.next(&mut input)
         if !row.ok { return invalid(row.line, row.error) }
@@ -60,14 +60,14 @@ pub fn summarize(source: string, group_column: string, sum_column: string) -> Re
             if amount.error == 2 { return invalid(row.line, "integer out of i64 range in column " + sum_column) }
             return invalid(row.line, "invalid integer in column " + sum_column)
         }
-        group := row.fields[group_index]
+        group := row.fields[group_index].clone()
         previous := map.get_or(&totals, group, 0)
         if !fits(previous, amount.value) { return invalid(row.line, "group total exceeds i64 range") }
         map.put(&mut totals, group, previous + amount.value)
     }
-    var groups := map.keys(&totals)
+    mut groups := map.keys(&totals)
     array.sort_strings(&mut groups)
-    var output: []u8 = []
+    mut output: []u8 = []
     bytes.append_utf8(&mut output, "group,total")
     for group in groups {
         output.push(10)

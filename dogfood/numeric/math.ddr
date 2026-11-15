@@ -14,7 +14,7 @@ pub fn near(a: f64, b: f64, absolute: f64, relative: f64) -> bool {
     if !a.is_finite() || !b.is_finite() { return false }
     difference := (a - b).abs()
     if difference <= absolute { return true }
-    var scale := a.abs()
+    mut scale := a.abs()
     if b.abs() > scale { scale = b.abs() }
     difference / scale <= relative
 }
@@ -30,8 +30,8 @@ pub fn near(a: f64, b: f64, absolute: f64, relative: f64) -> bool {
 pub fn hypot(x: f64, y: f64) -> f64 {
     if x.is_infinite() || y.is_infinite() { return 1.0 / 0.0 }
     if x.is_nan() || y.is_nan() { return x + y }
-    var a := x.abs()
-    var b := y.abs()
+    mut a := x.abs()
+    mut b := y.abs()
     if a < b { previous := a; a = b; b = previous }
     if a == 0.0 { return 0.0 }
     ratio := b / a
@@ -43,8 +43,8 @@ pub fn hypot(x: f64, y: f64) -> f64 {
     ([1e16, 1.0, 1.0, -1e16]) -> 2.0
 }
 pub fn compensated_sum(values: [f64; 4]) -> f64 {
-    var total := 0.0
-    var correction := 0.0
+    mut total := 0.0
+    mut correction := 0.0
     for value in values.iter() {
         adjusted := value - correction
         next := total + adjusted

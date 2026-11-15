@@ -8,6 +8,7 @@ pub struct CliArgs {
     compiler: string,
     root: string,
     graphics: bool,
+    benchmark: bool,
     error: string,
 }
 
@@ -20,9 +21,9 @@ fn is_repo_root(dir: string) -> bool {
 }
 
 fn parent_dir(path: string) -> string {
-    var end := path.len
+    mut end := path.len
     while end > 1 && path[end - 1] == 47 { end -= 1 }
-    var i := end - 1
+    mut i := end - 1
     while i >= 0 {
         if path[i] == 47 {
             if i == 0 { return "/" }
@@ -41,7 +42,7 @@ fn find_repo_root(explicit_root: string) -> string {
     }
     cur := fs.cwd()
     if cur.ok {
-        var d := cur.value
+        mut d := cur.value
         for _ in 0..8 {
             if is_repo_root(d) { return d }
             next := parent_dir(d)
@@ -51,7 +52,7 @@ fn find_repo_root(explicit_root: string) -> string {
     }
     arg0 := fs.realpath(sys.arg(0))
     if arg0.ok {
-        var d := parent_dir(arg0.value)
+        mut d := parent_dir(arg0.value)
         for _ in 0..8 {
             if is_repo_root(d) { return d }
             next := parent_dir(d)
@@ -62,43 +63,57 @@ fn find_repo_root(explicit_root: string) -> string {
     ""
 }
 
-pub fn parse_cli(allow_graphics: bool) -> CliArgs {
-    var compiler_arg := ""
-    var explicit_root := ""
-    var graphics := false
+pub fn parse_cli_options(allow_graphics: bool, allow_benchmark: bool) -> CliArgs {
+    mut compiler_arg := ""
+    mut explicit_root := ""
+    mut graphics := false
+    mut benchmark := false
     count := sys.arg_count()
-    var i := 1
+    mut i := 1
     while i < count {
         a := sys.arg(i)
         if a == "--graphics" && allow_graphics {
             graphics = true
+        } else if a == "--benchmark" && allow_benchmark {
+            benchmark = true
         } else if a == "--root" {
             if i + 1 >= count {
-                return CliArgs { ok: false, compiler: "", root: "", graphics: false, error: "missing path after --root" }
+                return CliArgs { ok: false, compiler: "", root: "", graphics: false, benchmark: false, error: "missing path after --root" }
             }
             i += 1
             explicit_root = sys.arg(i)
         } else if a.len > 0 && a[0] == 45 {
-            return CliArgs { ok: false, compiler: "", root: "", graphics: false, error: "unknown option: " + a }
+            return CliArgs { ok: false, compiler: "", root: "", graphics: false, benchmark: false, error: "unknown option: " + a }
         } else if compiler_arg.len == 0 {
             compiler_arg = a
         } else {
-            return CliArgs { ok: false, compiler: "", root: "", graphics: false, error: "unexpected argument: " + a }
+            return CliArgs { ok: false, compiler: "", root: "", graphics: false, benchmark: false, error: "unexpected argument: " + a }
         }
         i += 1
     }
     if compiler_arg.len == 0 {
-        return CliArgs { ok: false, compiler: "", root: "", graphics: false, error: "usage: <tool> /path/to/dunder [--root /path/to/dunder-hundmat]" }
+        mut usage := "usage: <tool> /path/to/dunder [--root /path/to/dunder-hundmat]"
+        if allow_graphics { usage += " [--graphics]" }
+        if allow_benchmark { usage += " [--benchmark]" }
+        return CliArgs { ok: false, compiler: "", root: "", graphics: false, benchmark: false, error: usage }
     }
     comp := fs.realpath(compiler_arg)
     if !comp.ok {
-        return CliArgs { ok: false, compiler: "", root: "", graphics: false, error: "compiler not found: " + compiler_arg }
+        return CliArgs { ok: false, compiler: "", root: "", graphics: false, benchmark: false, error: "compiler not found: " + compiler_arg }
     }
     root := find_repo_root(explicit_root)
     if root.len == 0 {
-        return CliArgs { ok: false, compiler: "", root: "", graphics: false, error: "could not locate dunder-hundmat root; pass --root <dir>" }
+        return CliArgs { ok: false, compiler: "", root: "", graphics: false, benchmark: false, error: "could not locate dunder-hundmat root; pass --root <dir>" }
     }
-    CliArgs { ok: true, compiler: comp.value, root: root, graphics: graphics, error: "" }
+    CliArgs { ok: true, compiler: comp.value, root: root, graphics: graphics, benchmark: benchmark, error: "" }
+}
+
+pub fn parse_cli(allow_graphics: bool) -> CliArgs {
+    parse_cli_options(allow_graphics, false)
+}
+
+pub fn parse_http_cli() -> CliArgs {
+    parse_cli_options(false, true)
 }
 
 pub fn fail(msg: string) -> bool {

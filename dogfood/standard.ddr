@@ -8,8 +8,8 @@ import std.parse as parse
 
 struct Stats { unique: i32, total: i64 }
 fn word_stats(input: string) -> Stats {
-    var counts := map.new()
-    var distinct := set.new()
+    mut counts := map.new()
+    mut distinct := set.new()
     words := text.split(text.trim(input), " ")
     for word in words {
         if word == "" { continue }
@@ -18,7 +18,7 @@ fn word_stats(input: string) -> Stats {
         added := set.insert(&mut distinct, word)
     }
     assert(map.length(&counts) == set.length(&distinct))
-    var frequencies := array.ints()
+    mut frequencies := array.ints()
     for key in map.keys(&counts) { frequencies.push(map.get_or(&counts, key, 0)) }
     array.sort(&mut frequencies)
     Stats { unique: map.length(&counts), total: array.sum(&frequencies) }

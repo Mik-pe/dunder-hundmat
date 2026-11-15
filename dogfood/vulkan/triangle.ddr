@@ -6,17 +6,17 @@ import "../graphics/triangle" as geometry
 fn main() -> i32 {
     settings := options.read()
     if !settings.ok { diagnostic := sys.eprint(settings.error); return 2 }
-    var opened: vulkan.OpenResult = vulkan.OpenResult { ok: false, window: vulkan.Window { id: 0 }, error: "" }
+    mut opened: vulkan.OpenResult = vulkan.OpenResult { ok: false, window: vulkan.Window { id: 0 }, error: "" }
     if settings.headless { opened = vulkan.open_headless(800, 600) }
     else { opened = vulkan.open("Dunder / Vulkan triangle - Escape to close", 800, 600) }
     if !opened.ok { diagnostic := sys.eprint(opened.error); return 1 }
     print("device=" + vulkan.device_name(opened.window))
-    var vertices: []f32 = []
+    mut vertices: []f32 = []
     for value in geometry.vertices() { vertices.push(value) }
-    var frames: i64 = 0
-    var width := 800
-    var height := 600
-    var running := true
+    mut frames: i64 = 0
+    mut width := 800
+    mut height := 600
+    mut running := true
     while running {
         frame := vulkan.poll(opened.window)
         if frame.closed || frame.key == 27 { running = false }

@@ -69,13 +69,13 @@ fn is_token_byte(b: u8) -> bool {
 }
 
 fn skip_ows_left(buf: &[]u8, start: i32, end: i32) -> i32 {
-    var i := start
+    mut i := start
     while i < end && (buf[i] == b' ' || buf[i] == b'\t') { i += 1 }
     i
 }
 
 fn skip_ows_right(buf: &[]u8, start: i32, end: i32) -> i32 {
-    var i := end
+    mut i := end
     while i > start && (buf[i - 1] == b' ' || buf[i - 1] == b'\t') { i -= 1 }
     i
 }
@@ -84,7 +84,7 @@ fn skip_ows_right(buf: &[]u8, start: i32, end: i32) -> i32 {
 // Returns >= 0 on success, -1 for bad spelling, -2 for overflow.
 fn parse_decimal_slice(buf: &[]u8, start: i32, end: i32, max_val: i64) -> i64 {
     if start >= end { return -1 }
-    var value: i64 = 0
+    mut value: i64 = 0
     for i in start..end {
         b := buf[i]
         if b < b'0' || b > b'9' { return -1 }
@@ -114,7 +114,7 @@ pub fn parse_request(buf: &[]u8, start: i32, end: i32) -> ParsedRequest {
     for i in start..sp1 {
         if !is_token_byte(buf[i]) { return error_result(400) }
     }
-    var method := 0
+    mut method := 0
     if bytes.equals_text(&buf, start, sp1, "GET") { method = method_get() }
     else if bytes.equals_text(&buf, start, sp1, "HEAD") { method = method_head() }
     else if bytes.equals_text(&buf, start, sp1, "POST") { method = method_post() }
@@ -129,8 +129,8 @@ pub fn parse_request(buf: &[]u8, start: i32, end: i32) -> ParsedRequest {
         if b <= 0x20 || b == 0x7f { return error_result(400) }
     }
 
-    var path_end := target_end
-    var query_start := target_end
+    mut path_end := target_end
+    mut query_start := target_end
     qmark := bytes.find_byte(&buf, target_start, target_end, b'?')
     if qmark >= 0 {
         path_end = qmark
@@ -138,22 +138,22 @@ pub fn parse_request(buf: &[]u8, start: i32, end: i32) -> ParsedRequest {
     }
 
     ver_start := sp2 + 1
-    var is_http11 := false
+    mut is_http11 := false
     if bytes.equals_text(&buf, ver_start, line_end, "HTTP/1.1") { is_http11 = true }
     else if !bytes.equals_text(&buf, ver_start, line_end, "HTTP/1.0") {
         return error_result(400)
     }
 
-    var keep_alive := is_http11
-    var saw_close := false
-    var saw_keep_alive := false
-    var saw_content_length := false
-    var content_length: i64 = 0
-    var ct_start := 0
-    var ct_end := 0
-    var header_count := 0
+    mut keep_alive := is_http11
+    mut saw_close := false
+    mut saw_keep_alive := false
+    mut saw_content_length := false
+    mut content_length: i64 = 0
+    mut ct_start := 0
+    mut ct_end := 0
+    mut header_count := 0
 
-    var cursor := line_end + 2
+    mut cursor := line_end + 2
     while cursor < header_end {
         next_crlf := bytes.find_crlf(&buf, cursor, header_end + 2)
         if next_crlf < 0 { return error_result(400) }
