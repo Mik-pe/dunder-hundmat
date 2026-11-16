@@ -413,10 +413,10 @@ pub fn run_suite_mode(compiler: string, root: string, benchmark: bool) -> bool {
         if !send_raw(&s, "GET /stats HTTP/1.1\r\nHost: localhost\r\n\r\n") { return false }
         r7 := read_response(&s, &mut rx, false, 5000)
         if !r7.ok || r7.status != 200 { return common.fail("GET /stats failed") }
-        doc := json.parse_bytes(move r7.body)
+        doc := json.Doc::parse_bytes(move r7.body)
         if !doc.ok { return common.fail("GET /stats invalid JSON: " + doc.error) }
-        reqs_f := json.get_i64(&doc, doc.root, "requests")
-        conns_f := json.get_i64(&doc, doc.root, "active_connections")
+        reqs_f := doc.get_i64(doc.root, "requests")
+        conns_f := doc.get_i64(doc.root, "active_connections")
         if !reqs_f.ok || reqs_f.value < 7 || !conns_f.ok || conns_f.value < 1 {
             return common.fail("GET /stats unexpected counters")
         }
