@@ -6,8 +6,18 @@ import std.parse
 
 pub struct Report { ok: bool, output: string, line: i32, error: string }
 
-fn invalid(line: i32, move message: string) -> Report {
-    Report { ok: false, output: "", line: line, error: message }
+// Parsing and aggregation finish before any output is rendered. The formatter
+// receives these owners together, then takes the totals and group order apart.
+struct Summary {
+    ok: bool,
+    totals: map.Map,
+    groups: []string,
+    line: i32,
+    error: string,
+}
+
+fn invalid(line: i32, move message: string) -> Summary {
+    Summary { ok: false, totals: map.new(), groups: [], line: line, error: message }
 }
 
 fn decimal(value: string) -> parse.Integer {
@@ -29,7 +39,7 @@ fn fits(left: i64, right: i64) -> bool {
     true
 }
 
-pub fn summarize(source: string, group_column: string, sum_column: string) -> Report {
+fn aggregate(source: string, group_column: string, sum_column: string) -> Summary {
     mut input := csv.reader(source.clone())
     header := csv.next(&mut input)
     if !header.ok { return invalid(header.line, move header.error) }
@@ -70,7 +80,13 @@ pub fn summarize(source: string, group_column: string, sum_column: string) -> Re
         if !fits(previous, amount.value) { return invalid(row.line, "group total exceeds i64 range") }
         map.put(&mut totals, move group, previous + amount.value)
     }
-    mut groups := map.keys(&totals)
+    groups := map.keys(&totals)
+    Summary { ok: true, totals: totals, groups: groups, line: 0, error: "" }
+}
+
+fn render(move summary: Summary) -> string {
+    totals := summary.totals
+    mut groups := summary.groups
     array.sort_strings(&mut groups)
     mut output: []u8 = []
     bytes.append_utf8(&mut output, "group,total")
@@ -82,7 +98,15 @@ pub fn summarize(source: string, group_column: string, sum_column: string) -> Re
     }
     decoded := bytes.decode(&output)
     assert(decoded.ok)
-    Report { ok: true, output: decoded.value, line: 0, error: "" }
+    decoded.value
+}
+
+pub fn summarize(source: string, group_column: string, sum_column: string) -> Report {
+    summary := aggregate(source, group_column, sum_column)
+    if !summary.ok {
+        return Report { ok: false, output: "", line: summary.line, error: summary.error }
+    }
+    Report { ok: true, output: render(move summary), line: 0, error: "" }
 }
 
 @test fn reports_group_sort_and_escape_utf8() {
