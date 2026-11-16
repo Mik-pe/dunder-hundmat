@@ -26,10 +26,11 @@ pub fn mime_type(path: string) -> string {
     "application/octet-stream"
 }
 
-pub fn serve(dir: &fs.ReadDir, buf: &[]u8, path_start: i32, path_end: i32, is_head: bool, keep_alive: bool, out: &mut []u8) {
+pub fn serve(dir: &fs.ReadDir, path: &[]u8, is_head: bool, keep_alive: bool, out: &mut []u8) {
     mut rel := "index.html"
-    if path_end - path_start > 1 {
-        decoded := bytes.decode_range(&buf, path_start + 1, path_end)
+    if path.len > 1 {
+        relative := &path[1..path.len]
+        decoded := bytes.decode(&relative)
         if !decoded.ok {
             response.write_error(&mut out, 400, is_head, keep_alive)
             return
@@ -53,5 +54,5 @@ pub fn serve(dir: &fs.ReadDir, buf: &[]u8, path_start: i32, path_end: i32, is_he
         return
     }
 
-    response.write_slice(&mut out, 200, mime_type(rel), &loaded.value, 0, loaded.value.len, is_head, keep_alive)
+    response.write_slice(&mut out, 200, mime_type(rel), &loaded.value, is_head, keep_alive)
 }

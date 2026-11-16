@@ -37,12 +37,10 @@ pub fn write_text(out: &mut []u8, status: i32, content_type: string, body: strin
     }
 }
 
-pub fn write_slice(out: &mut []u8, status: i32, content_type: string, src: &[]u8, start: i32, end: i32, is_head: bool, keep_alive: bool) {
-    assert(start >= 0 && start <= end && end <= src.len)
-    body_len := end - start
-    write_headers(&mut out, status, content_type, body_len, keep_alive)
-    if !is_head && body_len > 0 {
-        bytes.extend_range(&mut out, &src, start, end)
+pub fn write_slice(out: &mut []u8, status: i32, content_type: string, body: &[]u8, is_head: bool, keep_alive: bool) {
+    write_headers(&mut out, status, content_type, body.len, keep_alive)
+    if !is_head && body.len > 0 {
+        bytes.extend(&mut out, &body)
     }
 }
 

@@ -127,8 +127,9 @@ fn dispatch_request(
     is_get := req.method == protocol.method_get()
     is_head := req.method == protocol.method_head()
     is_post := req.method == protocol.method_post()
+    path := &rx_slab[req.path_start..req.path_end]
 
-    if bytes.equals_text(&rx_slab, req.path_start, req.path_end, "/healthz") {
+    if bytes.equals_text(&path, 0, path.len, "/healthz") {
         if is_get || is_head {
             response.write_text(&mut out, 200, "text/plain; charset=utf-8", "ok\n", is_head, req.keep_alive)
         } else {
@@ -137,7 +138,7 @@ fn dispatch_request(
         return
     }
 
-    if bytes.equals_text(&rx_slab, req.path_start, req.path_end, "/stats") {
+    if bytes.equals_text(&path, 0, path.len, "/stats") {
         if is_get || is_head {
             mut jbuf: []u8 = []
             jbuf.reserve(96)
@@ -147,21 +148,22 @@ fn dispatch_request(
             json.field_i64(&mut jbuf, &mut first, "uptime_ms", uptime_ms)
             json.end_obj(&mut jbuf)
             jbuf.push(b'\n')
-            response.write_slice(&mut out, 200, "application/json; charset=utf-8", &jbuf, 0, jbuf.len, is_head, req.keep_alive)
+            response.write_slice(&mut out, 200, "application/json; charset=utf-8", &jbuf, is_head, req.keep_alive)
         } else {
             response.write_error(&mut out, 405, false, req.keep_alive)
         }
         return
     }
 
-    if bytes.equals_text(&rx_slab, req.path_start, req.path_end, "/echo") {
+    if bytes.equals_text(&path, 0, path.len, "/echo") {
         if is_post {
             mut ct := "application/octet-stream"
             if req.ct_end > req.ct_start {
                 decoded := bytes.decode_range(&rx_slab, req.ct_start, req.ct_end)
                 if decoded.ok { ct = decoded.value }
             }
-            response.write_slice(&mut out, 200, ct, &rx_slab, req.body_start, req.body_end, false, req.keep_alive)
+            body := &rx_slab[req.body_start..req.body_end]
+            response.write_slice(&mut out, 200, ct, &body, false, req.keep_alive)
         } else {
             response.write_error(&mut out, 405, is_head, req.keep_alive)
         }
@@ -169,7 +171,7 @@ fn dispatch_request(
     }
 
     if (is_get || is_head) && config.has_doc_root {
-        static_files.serve(&config.doc_root, &rx_slab, req.path_start, req.path_end, is_head, req.keep_alive, &mut out)
+        static_files.serve(&config.doc_root, &path, is_head, req.keep_alive, &mut out)
         return
     }
 

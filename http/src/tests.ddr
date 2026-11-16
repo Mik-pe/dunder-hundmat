@@ -58,6 +58,25 @@ fn protocol_handles_incomplete_and_rejects_invalid_requests() {
 }
 
 @test
+fn response_uses_named_body_views_without_prefix_or_suffix() {
+    raw := to_bytes("prefixa\0bsuffix")
+    body := &raw[6..9]
+    mut out: []u8 = []
+    response.write_slice(&mut out, 200, "application/octet-stream", &body, false, false)
+    assert(bytes.equals_text(&out, 0, out.len, "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nContent-Type: application/octet-stream\r\nConnection: close\r\nServer: dunder-http\r\n\r\na\0b"))
+
+    out.clear()
+    response.write_slice(&mut out, 200, "application/octet-stream", &body, true, true)
+    assert(bytes.equals_text(&out, 0, out.len, "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nContent-Type: application/octet-stream\r\nConnection: keep-alive\r\nServer: dunder-http\r\n\r\n"))
+
+    text := "prefixå🌍suffix"
+    unicode := &text[6..12]
+    out.clear()
+    response.write_slice(&mut out, 200, "text/plain; charset=utf-8", &unicode, false, true)
+    assert(bytes.equals_text(&out, 0, out.len, "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: keep-alive\r\nServer: dunder-http\r\n\r\nå🌍"))
+}
+
+@test
 fn response_head_and_static_confinement() {
     mut out: []u8 = []
     response.write_text(&mut out, 200, "text/plain; charset=utf-8", "ok\n", true, true)
@@ -73,13 +92,14 @@ fn response_head_and_static_confinement() {
     dir := fs.ReadDir::grant(root.clone())
 
     out.clear()
-    req_root := to_bytes("/")
-    static_files.serve(&dir, &req_root, 0, req_root.len, false, true, &mut out)
+    req_root := to_bytes("prefix/suffix")
+    root_path := &req_root[6..7]
+    static_files.serve(&dir, &root_path, false, true, &mut out)
     assert(bytes.equals_text(&out, 0, out.len, "HTTP/1.1 200 OK\r\nContent-Length: 11\r\nContent-Type: text/html; charset=utf-8\r\nConnection: keep-alive\r\nServer: dunder-http\r\n\r\n<h1>hi</h1>"))
 
     out.clear()
     req_trav := to_bytes("/../etc/passwd")
-    static_files.serve(&dir, &req_trav, 0, req_trav.len, false, false, &mut out)
+    static_files.serve(&dir, &req_trav, false, false, &mut out)
     assert(bytes.equals_text(&out, 0, 17, "HTTP/1.1 404 Not "))
 
     // Verify server.serve reports AddressInUse (48) cleanly when port is already bound.
