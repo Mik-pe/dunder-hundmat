@@ -1,8 +1,100 @@
-// Metal graphics dogfood consuming `dunder-skrift` via `dunder.toml` [dependencies].
-// Rasterizes real font glyphs via `skrift.font` and emits Metal quad geometry via `graphics.macos`.
+// Metal graphics showcase consuming `dunder-skrift` via `dunder.toml` [dependencies].
+// Opens a live macOS Metal window rendering TrueType, OpenType CFF, TTC collections,
+// GPOS kerning, and variable font instances plus an enlarged pixel-grid coverage inspector.
 import ..graphics.macos as macos
 import skrift.font as skrift
+import std.parse as parse
 import sys
+
+fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo { return lo }
+    if v > hi { return hi }
+    v
+}
+
+struct BitmapAtlas {
+    widths: []i32,
+    heights: []i32,
+    starts: []i32,
+    pixels: []u8,
+}
+
+impl BitmapAtlas {
+    fn new() -> Self {
+        Self { widths: [], heights: [], starts: [], pixels: [] }
+    }
+
+    fn add(&mut self, rt: &skrift.RenderedText) -> i32 {
+        idx := self.widths.len
+        self.widths.push(if rt.ok { rt.width } else { 0 })
+        self.heights.push(if rt.ok { rt.height } else { 0 })
+        self.starts.push(self.pixels.len)
+        if rt.ok {
+            for p in &rt.pixels { self.pixels.push(p) }
+        }
+        idx
+    }
+
+    fn add_text(&mut self, path: string, face_idx: i32, px: f64, text: string, ax1: string, v1: f64, ax2: string, v2: f64) -> i32 {
+        rt := render_sample(path, face_idx, px, text, ax1, v1, ax2, v2)
+        self.add(&rt)
+    }
+
+    fn draw_entry(&self, idx: i32, vertices: &mut []f32, cw: f64, ch: f64,
+        ox: f64, oy: f64, scale: f64, r: f32, g: f32, b: f32) {
+        if idx < 0 || idx >= self.widths.len { return }
+        bw := self.widths[idx]
+        bh := self.heights[idx]
+        start := self.starts[idx]
+        for row in 0..bh {
+            for col in 0..bw {
+                if vertices.len + 48 > 780000 { return }
+                cov := i32(self.pixels[start + row * bw + col])
+                if cov == 0 { continue }
+                alpha := f32(cov) / 255.0
+                fill_px(&mut vertices, cw, ch, ox + f64(col) * scale, oy + f64(row) * scale,
+                    scale, scale, macos.rgba(r, g, b, alpha))
+            }
+        }
+    }
+
+    fn draw_grid(&self, idx: i32, vertices: &mut []f32, cw: f64, ch: f64,
+        ox: f64, oy: f64, max_w: f64, max_h: f64, r: f32, g: f32, b: f32) {
+        if idx < 0 || idx >= self.widths.len { return }
+        bw := self.widths[idx]
+        bh := self.heights[idx]
+        if bw <= 0 || bh <= 0 { return }
+        mut cell := 14.0
+        if max_w / f64(bw) < cell { cell = max_w / f64(bw) }
+        if max_h / f64(bh) < cell { cell = max_h / f64(bh) }
+        if cell < 4.0 { cell = 4.0 }
+        gap := if cell >= 6.0 { 1.0 } else { 0.0 }
+        bg := macos.rgba(0.11, 0.14, 0.21, 0.72)
+        start := self.starts[idx]
+        for row in 0..bh {
+            for col in 0..bw {
+                if vertices.len + 48 > 780000 { return }
+                cov := i32(self.pixels[start + row * bw + col])
+                px := ox + f64(col) * cell
+                py := oy + f64(row) * cell
+                fill_px(&mut vertices, cw, ch, px, py, cell - gap, cell - gap, bg)
+                if cov > 0 {
+                    alpha := f32(cov) / 255.0
+                    fill_px(&mut vertices, cw, ch, px, py, cell - gap, cell - gap, macos.rgba(r, g, b, alpha))
+                }
+            }
+        }
+    }
+}
+
+fn fill_px(vertices: &mut []f32, cw: f64, ch: f64, x: f64, y: f64, w: f64, h: f64, color: macos.Color) {
+    if cw <= 0.0 || ch <= 0.0 || vertices.len + 48 > 780000 { return }
+    nx := f32(x * 2.0 / cw - 1.0)
+    ny := f32(1.0 - (y + h) * 2.0 / ch)
+    nw := f32(w * 2.0 / cw)
+    nh := f32(h * 2.0 / ch)
+    macos.quad(&mut vertices, nx, ny, nw, nh, color)
+}
 
 pub fn append_rendered_text(vertices: &mut []f32, rt: &skrift.RenderedText,
     canvas_w: f64, canvas_h: f64, origin_x: f64, origin_y: f64,
@@ -13,41 +105,208 @@ pub fn append_rendered_text(vertices: &mut []f32, rt: &skrift.RenderedText,
     mut drawn := 0
     for row in 0..rt.height {
         for col in 0..rt.width {
+            if vertices.len + 48 > 780000 { return drawn }
             cov := i32(rt.pixels[row * rt.width + col])
             if cov == 0 { continue }
             alpha := f32(cov) / 255.0
             px := origin_x + f64(col) * pixel_scale
             py := origin_y + f64(row) * pixel_scale
-            nx := f32(px * 2.0 / canvas_w - 1.0)
-            ny := f32(1.0 - (py + pixel_scale) * 2.0 / canvas_h)
-            nw := f32(pixel_scale * 2.0 / canvas_w)
-            nh := f32(pixel_scale * 2.0 / canvas_h)
-            macos.quad(&mut vertices, nx, ny, nw, nh, macos.rgba(r, g, b, alpha))
+            fill_px(&mut vertices, canvas_w, canvas_h, px, py, pixel_scale, pixel_scale, macos.rgba(r, g, b, alpha))
             drawn += 1
         }
     }
     drawn
 }
 
+fn empty_rt() -> skrift.RenderedText {
+    skrift.RenderedText { ok: false, error: "", width: 0, height: 0, baseline: 0, advance_x: 0.0, pixels: [] }
+}
+
+fn render_sample(path: string, face_idx: i32, px: f64, text: string, ax1: string, v1: f64, ax2: string, v2: f64) -> skrift.RenderedText {
+    if !sys.metadata(path).is_file { return empty_rt() }
+    mut f := skrift.Face::from_file(path, face_idx)
+    if !f.ok { return empty_rt() }
+    f.set_pixel_size(px)
+    if ax1 != "" { _ := f.set_axis(ax1, v1) }
+    if ax2 != "" { _ := f.set_axis(ax2, v2) }
+    f.render_text(text)
+}
+
+fn draw_panel(vertices: &mut []f32, cw: f64, ch: f64, x: f64, y: f64, w: f64, h: f64, ar: f32, ag: f32, ab: f32) {
+    fill_px(&mut vertices, cw, ch, x, y, w, h, macos.rgba(0.08, 0.10, 0.15, 0.92))
+    fill_px(&mut vertices, cw, ch, x, y, w, 2.0, macos.rgba(ar, ag, ab, 0.85))
+}
+
+fn emit_scene(vertices: &mut []f32, atlas: &BitmapAtlas,
+    id_h_lbl: i32, id_h_txt: i32, id_a_lbl: i32, id_a_txt: i32,
+    id_c_lbl: i32, id_c_txt: i32, id_m_thin: i32, id_m_bold: i32,
+    id_s_lbl: i32, id_s_txt: i32, vl_id: i32, vw_id: i32, vz_id: i32,
+    cw: f64, ch: f64, ar: f32, ag: f32, ab: f32) {
+    vertices.clear()
+    draw_panel(&mut vertices, cw, ch, 28.0, 22.0, 504.0, 114.0, ar, ag, ab)
+    atlas.draw_entry(id_h_lbl, &mut vertices, cw, ch, 44.0, 32.0, 1.0, ar, ag, ab)
+    atlas.draw_entry(id_h_txt, &mut vertices, cw, ch, 44.0, 56.0, 2.0, ar, ag, ab)
+
+    draw_panel(&mut vertices, cw, ch, 28.0, 150.0, 504.0, 114.0, ar, ag, ab)
+    atlas.draw_entry(id_a_lbl, &mut vertices, cw, ch, 44.0, 160.0, 1.0, ar, ag, ab)
+    atlas.draw_entry(id_a_txt, &mut vertices, cw, ch, 44.0, 184.0, 2.0, 0.96, 0.98, 1.0)
+
+    draw_panel(&mut vertices, cw, ch, 28.0, 278.0, 504.0, 114.0, ar, ag, ab)
+    atlas.draw_entry(id_c_lbl, &mut vertices, cw, ch, 44.0, 288.0, 1.0, ar, ag, ab)
+    atlas.draw_entry(id_c_txt, &mut vertices, cw, ch, 44.0, 312.0, 2.0, 0.96, 0.98, 1.0)
+
+    draw_panel(&mut vertices, cw, ch, 28.0, 406.0, 504.0, 134.0, ar, ag, ab)
+    atlas.draw_entry(id_m_thin, &mut vertices, cw, ch, 44.0, 422.0, 1.5, 0.76, 0.88, 1.0)
+    atlas.draw_entry(id_m_bold, &mut vertices, cw, ch, 44.0, 478.0, 1.5, 1.0, 1.0, 1.0)
+
+    draw_panel(&mut vertices, cw, ch, 28.0, 554.0, 504.0, 84.0, ar, ag, ab)
+    atlas.draw_entry(id_s_lbl, &mut vertices, cw, ch, 44.0, 568.0, 1.0, 0.85, 0.90, 0.96)
+    atlas.draw_entry(id_s_txt, &mut vertices, cw, ch, 44.0, 598.0, 1.0, ar, ag, ab)
+
+    rx := 552.0
+    rw := cw - rx - 28.0
+    if rw > 120.0 {
+        draw_panel(&mut vertices, cw, ch, rx, 22.0, rw, 148.0, ar, ag, ab)
+        atlas.draw_entry(vl_id, &mut vertices, cw, ch, rx + 18.0, 36.0, 1.0, ar, ag, ab)
+        atlas.draw_entry(vw_id, &mut vertices, cw, ch, rx + 18.0, 68.0, 2.0, 1.0, 1.0, 1.0)
+
+        draw_panel(&mut vertices, cw, ch, rx, 184.0, rw, ch - 206.0, ar, ag, ab)
+        atlas.draw_grid(vz_id, &mut vertices, cw, ch, rx + 26.0, 212.0, rw - 52.0, ch - 258.0, ar, ag, ab)
+    }
+}
+
 fn main() -> i32 {
-    mut font_path := "/System/Library/Fonts/Supplemental/Arial.ttf"
-    if sys.arg_count() >= 2 { font_path = sys.arg(1) }
-    mut word := "DUNDER"
-    if sys.arg_count() >= 3 { word = sys.arg(2) }
-    if !sys.metadata(font_path).is_file {
-        print(f"skrift-metal: font not found at {font_path}")
+    mut max_frames: i64 = 0
+    mut headless := false
+    mut custom_font := ""
+    mut custom_text := ""
+    mut i := 1
+    while i < sys.arg_count() {
+        arg := sys.arg(i)
+        if arg == "--frames" && i + 1 < sys.arg_count() {
+            i += 1
+            p := parse.integer(sys.arg(i))
+            if !p.ok || p.value <= 0 { _ := sys.eprint("invalid --frames"); return 2 }
+            max_frames = p.value
+        } else if arg == "--headless-check" {
+            headless = true
+        } else if arg == "--font" && i + 1 < sys.arg_count() {
+            i += 1
+            custom_font = sys.arg(i)
+        } else if arg == "--text" && i + 1 < sys.arg_count() {
+            i += 1
+            custom_text = sys.arg(i)
+        } else {
+            _ := sys.eprint("usage: skrift-metal [--frames N] [--headless-check] [--font PATH] [--text STR]")
+            return 2
+        }
+        i += 1
+    }
+
+    arial := "/System/Library/Fonts/Supplemental/Arial.ttf"
+    stix := "/System/Library/Fonts/Supplemental/STIXGeneral.otf"
+    helv := "/System/Library/Fonts/Helvetica.ttc"
+    mono := "/System/Library/Fonts/SFNSMono.ttf"
+    ny := "/System/Library/Fonts/NewYork.ttf"
+    label_font := if sys.metadata(arial).is_file { arial.clone() } else { stix.clone() }
+    hero_font := if custom_font != "" { custom_font } else if sys.metadata(stix).is_file { stix.clone() } else { label_font.clone() }
+    hero_text := if custom_text != "" { custom_text } else { "Dunder Skrift" }
+    var_font := if sys.metadata(ny).is_file { ny } else { label_font.clone() }
+
+    mut atlas := BitmapAtlas::new()
+    id_h_lbl := atlas.add_text(label_font, 0, 12.0, "OTF CFF + SUBR", "", 0.0, "", 0.0)
+    id_h_txt := atlas.add_text(hero_font, 0, 26.0, hero_text, "", 0.0, "", 0.0)
+    id_a_lbl := atlas.add_text(label_font, 0, 12.0, "TTF + GPOS KERN (-152u)", "", 0.0, "", 0.0)
+    id_a_txt := atlas.add_text(arial, 0, 24.0, "AVATAR  Rg", "", 0.0, "", 0.0)
+    id_c_lbl := atlas.add_text(label_font, 0, 12.0, "TTC COLLECTION FACE #1", "", 0.0, "", 0.0)
+    id_c_txt := atlas.add_text(helv, 1, 22.0, "Helvetica Bold", "", 0.0, "", 0.0)
+    id_m_thin := atlas.add_text(mono, 0, 17.0, "SFNSMono 300", "wght", 300.0, "", 0.0)
+    id_m_bold := atlas.add_text(mono, 0, 17.0, "SFNSMono 900", "wght", 900.0, "", 0.0)
+    id_s_lbl := atlas.add_text(label_font, 0, 14.0, "1:1 PIXEL RENDER: Arial 14px", "", 0.0, "", 0.0)
+    id_s_txt := atlas.add_text(stix, 0, 16.0, "Space: anim  Left/Right: wght  C: tint  Esc: close", "", 0.0, "", 0.0)
+
+    weights: []i32 = [400, 500, 600, 700, 800, 900, 1000]
+    mut vz_ids: []i32 = []
+    mut vw_ids: []i32 = []
+    mut vl_ids: []i32 = []
+    for wg in &weights {
+        vz_ids.push(atlas.add_text(var_font, 0, 26.0, "g", "wght", f64(wg), "opsz", 14.0))
+        vw_ids.push(atlas.add_text(var_font, 0, 24.0, "NewYork Rg", "wght", f64(wg), "opsz", 14.0))
+        vl_ids.push(atlas.add_text(label_font, 0, 12.0, f"VARIABLE wght={wg} (opsz=14)", "", 0.0, "", 0.0))
+    }
+
+    if headless {
+        mut hv: []f32 = []
+        emit_scene(&mut hv, &atlas,
+            id_h_lbl, id_h_txt, id_a_lbl, id_a_txt,
+            id_c_lbl, id_c_txt, id_m_thin, id_m_bold,
+            id_s_lbl, id_s_txt, vl_ids[3], vw_ids[3], vz_ids[3],
+            1020.0, 660.0, 0.29, 0.94, 0.77)
+        print(f"skrift-metal headless check: quads={hv.len / 48}, vertices={hv.len / 8}/100000")
+        assert(hv.len / 8 <= 100000)
         return 0
     }
-    mut face := skrift.Face::from_file(font_path, 0)
-    if !face.ok {
-        _ := sys.eprint(face.error)
+
+    opened := macos.open("Dunder Skrift / Metal Font Showcase (Space anim | Left/Right wght | C tint | Esc quit)", 1020, 660)
+    if !opened.ok {
+        _ := sys.eprint(opened.error)
         return 1
     }
-    face.set_pixel_size(24.0)
-    rt := face.render_text(word)
+
     mut vertices: []f32 = []
-    quads := append_rendered_text(&mut vertices, &rt, 800.0, 600.0, 80.0, 240.0, 2.0, 0.29, 0.94, 0.77)
-    print(f"skrift-metal '{word}' -> bitmap={rt.width}x{rt.height}, quads={quads}, floats={vertices.len}")
+    vertices.reserve(240000)
+    mut palette := 0
+    mut paused := false
+    mut w_idx := 3
+    mut anim_time := 0.0
+    mut prev_time := 0.0
+    mut running := true
+    mut drawn_frames: i64 = 0
+
+    while running {
+        frame := macos.poll(opened.window)
+        if frame.closed || frame.key == 53 {
+            running = false
+            continue
+        }
+        dt := clamp_f64(frame.time - prev_time, 0.0, 0.1)
+        prev_time = frame.time
+        if frame.key == 49 { paused = !paused }
+        if frame.key == 8 { palette = (palette + 1) % 3 }
+        if frame.key == 123 { paused = true; w_idx = if w_idx > 0 { w_idx - 1 } else { weights.len - 1 } }
+        if frame.key == 124 { paused = true; w_idx = (w_idx + 1) % weights.len }
+        if !paused {
+            anim_time += dt
+            w_idx = i32(anim_time * 2.0) % weights.len
+        }
+
+        cw := if frame.width > 0 { f64(frame.width) } else { 1020.0 }
+        ch := if frame.height > 0 { f64(frame.height) } else { 660.0 }
+
+        mut ar: f32 = 0.29
+        mut ag: f32 = 0.94
+        mut ab: f32 = 0.77
+        if palette == 1 { ar = 1.0; ag = 0.56; ab = 0.34 }
+        else if palette == 2 { ar = 0.72; ag = 0.58; ab = 1.0 }
+
+        emit_scene(&mut vertices, &atlas,
+            id_h_lbl, id_h_txt, id_a_lbl, id_a_txt,
+            id_c_lbl, id_c_txt, id_m_thin, id_m_bold,
+            id_s_lbl, id_s_txt, vl_ids[w_idx], vw_ids[w_idx], vz_ids[w_idx],
+            cw, ch, ar, ag, ab)
+
+        drawn := macos.draw(opened.window, &vertices, 0.031, 0.041, 0.062)
+        if !drawn.ok {
+            _ := sys.eprint(drawn.error)
+            macos.close(opened.window)
+            return 1
+        }
+        drawn_frames = drawn.frames
+        if max_frames > 0 && drawn_frames >= max_frames { running = false }
+    }
+
+    macos.close(opened.window)
+    print(f"skrift-metal closed after {drawn_frames} frames")
     0
 }
 
@@ -62,6 +321,7 @@ fn main() -> i32 {
         mut vertices: []f32 = []
         quads := append_rendered_text(&mut vertices, &rt, 640.0, 480.0, 40.0, 40.0, 1.0, 1.0, 1.0, 1.0)
         assert(quads > 0 && vertices.len == quads * 48)
+        assert(vertices.len <= 780000)
         for v in &vertices { assert(v.is_finite()) }
     }
 }
