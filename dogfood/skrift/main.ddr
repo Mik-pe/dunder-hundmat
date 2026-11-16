@@ -1,0 +1,67 @@
+// Metal graphics dogfood consuming `dunder-skrift` via `dunder.toml` [dependencies].
+// Rasterizes real font glyphs via `skrift.font` and emits Metal quad geometry via `graphics.macos`.
+import ..graphics.macos as macos
+import skrift.font as skrift
+import sys
+
+pub fn append_rendered_text(vertices: &mut []f32, rt: &skrift.RenderedText,
+    canvas_w: f64, canvas_h: f64, origin_x: f64, origin_y: f64,
+    pixel_scale: f64, r: f32, g: f32, b: f32) -> i32 {
+    if !rt.ok || rt.width <= 0 || rt.height <= 0 || canvas_w <= 0.0 || canvas_h <= 0.0 {
+        return 0
+    }
+    mut drawn := 0
+    for row in 0..rt.height {
+        for col in 0..rt.width {
+            cov := i32(rt.pixels[row * rt.width + col])
+            if cov == 0 { continue }
+            alpha := f32(cov) / 255.0
+            px := origin_x + f64(col) * pixel_scale
+            py := origin_y + f64(row) * pixel_scale
+            nx := f32(px * 2.0 / canvas_w - 1.0)
+            ny := f32(1.0 - (py + pixel_scale) * 2.0 / canvas_h)
+            nw := f32(pixel_scale * 2.0 / canvas_w)
+            nh := f32(pixel_scale * 2.0 / canvas_h)
+            macos.quad(&mut vertices, nx, ny, nw, nh, macos.rgba(r, g, b, alpha))
+            drawn += 1
+        }
+    }
+    drawn
+}
+
+fn main() -> i32 {
+    mut font_path := "/System/Library/Fonts/Supplemental/Arial.ttf"
+    if sys.arg_count() >= 2 { font_path = sys.arg(1) }
+    mut word := "DUNDER"
+    if sys.arg_count() >= 3 { word = sys.arg(2) }
+    if !sys.metadata(font_path).is_file {
+        print(f"skrift-metal: font not found at {font_path}")
+        return 0
+    }
+    mut face := skrift.Face::from_file(font_path, 0)
+    if !face.ok {
+        _ := sys.eprint(face.error)
+        return 1
+    }
+    face.set_pixel_size(24.0)
+    rt := face.render_text(word)
+    mut vertices: []f32 = []
+    quads := append_rendered_text(&mut vertices, &rt, 800.0, 600.0, 80.0, 240.0, 2.0, 0.29, 0.94, 0.77)
+    print(f"skrift-metal '{word}' -> bitmap={rt.width}x{rt.height}, quads={quads}, floats={vertices.len}")
+    0
+}
+
+@test fn renders_ttf_text_to_metal_quads() {
+    arial := "/System/Library/Fonts/Supplemental/Arial.ttf"
+    if sys.metadata(arial).is_file {
+        mut face := skrift.Face::from_file(arial, 0)
+        assert(face.ok)
+        face.set_pixel_size(20.0)
+        rt := face.render_text("AV")
+        assert(rt.ok && rt.width > 0 && rt.height > 0)
+        mut vertices: []f32 = []
+        quads := append_rendered_text(&mut vertices, &rt, 640.0, 480.0, 40.0, 40.0, 1.0, 1.0, 1.0, 1.0)
+        assert(quads > 0 && vertices.len == quads * 48)
+        for v in &vertices { assert(v.is_finite()) }
+    }
+}

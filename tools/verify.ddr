@@ -34,6 +34,9 @@ fn main() -> i32 {
     if !test_graphics.run_suite(cli.compiler, cli.root, cli.graphics) { return 1 }
     if !run_dunder_tests(cli.compiler, cli.root + "/http/src/tests.ddr", work + "/http-tests") { return 1 }
     if !test_http.run_suite(cli.compiler, cli.root) { return 1 }
+    if sys.metadata(cli.root + "/../dunder-skrift/dunder.toml").is_file {
+        if !run_dunder_tests(cli.compiler, cli.root + "/dogfood/skrift/main.ddr", work + "/skrift-tests") { return 1 }
+    }
 
     print("PASS all dunder-hundmat suites")
     0

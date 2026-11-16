@@ -1,0 +1,7 @@
+name = "skrift-metal"
+version = "0.1.0"
+root = "main.ddr"
+test_root = "main.ddr"
+
+[dependencies]
+skrift = "../../../dunder-skrift"
