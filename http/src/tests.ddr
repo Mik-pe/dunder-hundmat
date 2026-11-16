@@ -70,7 +70,7 @@ fn response_head_and_static_confinement() {
     assert(sys.write_text(idx, "<h1>hi</h1>").ok)
     defer { unused_i := sys.remove_file(idx) }
 
-    dir := fs.grant_dir(root.clone())
+    dir := fs.ReadDir::grant(root.clone())
 
     out.clear()
     req_root := to_bytes("/")
@@ -91,7 +91,7 @@ fn response_head_and_static_confinement() {
         host: net.loopback(),
         port: net.local_port(&occupied),
         has_doc_root: false,
-        doc_root: fs.grant_dir(""),
+        doc_root: fs.ReadDir::grant(""),
         idle_timeout_ms: 1000,
         max_requests: 1,
         announce_listening: false,

@@ -77,7 +77,7 @@ fn main() -> i32 {
         host: host,
         port: port,
         has_doc_root: has_doc_root,
-        doc_root: fs.grant_dir(move dir_path),
+        doc_root: fs.ReadDir::grant(move dir_path),
         idle_timeout_ms: idle_ms,
         max_requests: max_requests,
         announce_listening: true,

@@ -6,7 +6,7 @@ Lättvikts, single-process, händelsestyrd HTTP/1.1-server skriven i Dunder.
 
 - `src/protocol.ddr`: zero-copy-parser för HTTP/1.1 och HTTP/1.0 över `rx_slab`-skivor (`Content-Length`, `Connection: keep-alive`/`close`, pipelining, storleksbegränsning samt avvisning av smuggling/`Transfer-Encoding`).
 - `src/response.ddr`: direkt serialisering av HTTP-svar till `&mut []u8` med korrekt `HEAD`-beteende.
-- `src/static.ddr`: katalogavgränsad filservering genom `std.fs.ReadDir` + `fs.resolve_read` och `fs.read_bytes_limit`.
+- `src/static.ddr`: katalogavgränsad filservering genom `std.fs.ReadDir`, `dir.resolve_read(rel)` och `file.read_bytes_limit(max_bytes)`.
 - `src/server.ddr`: icke-blockerande `net.PollSet` + `net.StreamSet` händelseloop med SOA-tillstånd, lazy `rx_slab`, direkt skrivning från `tx_scratch` och `tx_arena`-backpressure över `POLLOUT`, samt idle timeout via `sys.now_ms()`.
 - `src/main.ddr`: CLI (`--host`, `--port`, `--dir`, `--idle-ms`, `--max-requests`) deklarerad med `capability network, filesystem`.
 

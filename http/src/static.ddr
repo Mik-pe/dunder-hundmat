@@ -37,13 +37,13 @@ pub fn serve(dir: &fs.ReadDir, buf: &[]u8, path_start: i32, path_end: i32, is_he
         rel = decoded.value
     }
 
-    opened := fs.resolve_read(&dir, rel)
+    opened := dir.resolve_read(rel)
     if !opened.ok {
         response.write_error(&mut out, 404, is_head, keep_alive)
         return
     }
 
-    loaded := fs.read_bytes_limit(&opened.file, max_static_file_bytes())
+    loaded := opened.file.read_bytes_limit(max_static_file_bytes())
     if !loaded.ok {
         if loaded.error == 27 {
             response.write_error(&mut out, 413, is_head, keep_alive)
