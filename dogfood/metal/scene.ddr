@@ -1,5 +1,5 @@
 import ..graphics.macos as macos
-import math
+import std.math as math
 
 pub enum Motion { Running = 0, Paused = 1 }
 pub enum Palette { Lagoon = 0, Ember = 1, Iris = 2 }
