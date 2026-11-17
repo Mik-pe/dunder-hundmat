@@ -1,0 +1,54 @@
+capability unsafe
+import .objc as o
+import std.bytes as bytes
+
+// The ARM64 ABI passes MTLRegion (six NSUInteger fields) indirectly.
+@c_layout
+struct Region { x: usize, y: usize, z: usize, width: usize, height: usize, depth: usize }
+
+@extern("/usr/lib/libobjc.A.dylib", "objc_msgSend")
+unsafe fn replace_region(texture: ptr, selector: ptr, region: ptr, level: usize, source: ptr, stride: usize)
+
+@extern("/usr/lib/libobjc.A.dylib", "objc_msgSend")
+unsafe fn get_bytes(texture: ptr, selector: ptr, output: ptr, stride: usize, region: ptr, level: usize)
+
+fn region_2d(width: i32, height: i32) -> Region {
+    Region { x: 0, y: 0, z: 0, width: usize(width), height: usize(height), depth: 1 }
+}
+
+unsafe fn create(device: ptr, width: i32, height: i32, format: usize, usage: usize) -> ptr {
+    descriptor := o.new_object(cstr("MTLTextureDescriptor"))
+    if descriptor == ptr(0) { return ptr(0) }
+    defer { o.release(descriptor) }
+    o.set_word(descriptor, cstr("setTextureType:"), 2)
+    o.set_word(descriptor, cstr("setPixelFormat:"), format)
+    o.set_word(descriptor, cstr("setWidth:"), usize(width))
+    o.set_word(descriptor, cstr("setHeight:"), usize(height))
+    o.set_word(descriptor, cstr("setStorageMode:"), 0)
+    o.set_word(descriptor, cstr("setUsage:"), usage)
+    o.get_object(device, cstr("newTextureWithDescriptor:"), descriptor)
+}
+
+pub unsafe fn upload_coverage(device: ptr, width: i32, height: i32, coverage: &[]u8) -> ptr {
+    texture := create(device, width, height, 10, 1)
+    if texture != ptr(0) {
+        region := region_2d(width, height)
+        replace_region(texture, o.selector(cstr("replaceRegion:mipmapLevel:withBytes:bytesPerRow:")),
+            addr(&region), 0, addr(&coverage[0]), usize(width))
+    }
+    texture
+}
+
+pub unsafe fn color_target(device: ptr, width: i32, height: i32) -> ptr {
+    create(device, width, height, 80, 4)
+}
+
+pub unsafe fn read_color(texture: ptr, width: i32, height: i32) -> []u8 {
+    mut output: []u8 = []
+    stride := width * 4
+    bytes.pad(&mut output, stride * height)
+    region := region_2d(width, height)
+    get_bytes(texture, o.selector(cstr("getBytes:bytesPerRow:fromRegion:mipmapLevel:")),
+        addr(&mut output[0]), usize(stride), addr(&region), 0)
+    output
+}

@@ -181,15 +181,11 @@ pub unsafe fn destroy(s: &mut metal.State) {
     o.set_object(s.window, cstr("setDelegate:"), ptr(0))
     o.action(s.window, cstr("close"))
     o.set_object(s.view, cstr("setLayer:"), ptr(0))
-    o.release(s.buffer); s.buffer = ptr(0)
-    o.release(s.pipeline); s.pipeline = ptr(0)
-    o.release(s.queue); s.queue = ptr(0)
-    o.release(s.device); s.device = ptr(0)
+    metal.release(&mut s)
     o.release(s.window); s.window = ptr(0)
     o.release(s.view); s.view = ptr(0)
     o.release(s.layer); s.layer = ptr(0)
     o.release(s.delegate); s.delegate = ptr(0)
-    s.vertexCount = 0
 }
 
 pub unsafe fn poll(s: &mut metal.State) {

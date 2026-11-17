@@ -3,6 +3,7 @@
 // GPOS kerning, and variable font instances plus an enlarged pixel-grid coverage inspector.
 import ..graphics.macos as macos
 import skrift.font as skrift
+import std.bytes as bytes
 import std.parse as parse
 import sys
 
@@ -12,27 +13,52 @@ fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
     v
 }
 
+struct AtlasEntry { width: i32, height: i32, row: i32, start: i32 }
+
 struct BitmapAtlas {
-    widths: []i32,
-    heights: []i32,
-    starts: []i32,
+    entries: []AtlasEntry,
+    width: i32,
+    height: i32,
     pixels: []u8,
+    full: bool,
 }
 
 impl BitmapAtlas {
     fn new() -> Self {
-        Self { widths: [], heights: [], starts: [], pixels: [] }
+        Self { entries: [], width: 0, height: 0, pixels: [], full: false }
     }
 
     fn add(&mut self, rt: &skrift.RenderedText) -> i32 {
-        idx := self.widths.len
-        self.widths.push(if rt.ok { rt.width } else { 0 })
-        self.heights.push(if rt.ok { rt.height } else { 0 })
-        self.starts.push(self.pixels.len)
-        if rt.ok {
-            for p in &rt.pixels { self.pixels.push(p) }
+        idx := self.entries.len
+        if !rt.ok || rt.width <= 0 || rt.height <= 0 {
+            self.entries.push(AtlasEntry {width:0, height:0, row:0, start:0})
+            return idx
         }
+        width := if rt.width > self.width { rt.width } else { self.width }
+        if rt.height > 16384 || !macos.fits_texture(width, self.height + rt.height) {
+            self.full = true
+            self.entries.push(AtlasEntry {width:0, height:0, row:0, start:0})
+            return idx
+        }
+        assert(rt.pixels.len == rt.width * rt.height)
+        self.entries.push(AtlasEntry {width:rt.width, height:rt.height, row:self.height, start:self.pixels.len})
+        bytes.extend(&mut self.pixels, &rt.pixels)
+        self.width = width
+        self.height += rt.height
         idx
+    }
+
+    fn texture(&self) -> macos.CoverageAtlas {
+        mut pixels: []u8 = []
+        pixels.reserve(self.width * self.height)
+        for entry in &self.entries {
+            for row in 0..entry.height {
+                start := entry.start + row * entry.width
+                bytes.extend_range(&mut pixels, &self.pixels, start, start + entry.width)
+                bytes.pad(&mut pixels, self.width - entry.width)
+            }
+        }
+        macos.CoverageAtlas {width:self.width, height:self.height, pixels:pixels}
     }
 
     fn add_text(&mut self, path: string, face_idx: i32, px: f64, text: string, ax1: string, v1: f64, ax2: string, v2: f64) -> i32 {
@@ -42,27 +68,25 @@ impl BitmapAtlas {
 
     fn draw_entry(&self, idx: i32, vertices: &mut []f32, cw: f64, ch: f64,
         ox: f64, oy: f64, scale: f64, r: f32, g: f32, b: f32) {
-        if idx < 0 || idx >= self.widths.len { return }
-        bw := self.widths[idx]
-        bh := self.heights[idx]
-        start := self.starts[idx]
-        for row in 0..bh {
-            for col in 0..bw {
-                if vertices.len + 48 > 780000 { return }
-                cov := i32(self.pixels[start + row * bw + col])
-                if cov == 0 { continue }
-                alpha := f32(cov) / 255.0
-                fill_px(&mut vertices, cw, ch, ox + f64(col) * scale, oy + f64(row) * scale,
-                    scale, scale, macos.rgba(r, g, b, alpha))
-            }
+        if idx < 0 || idx >= self.entries.len || cw <= 0.0 || ch <= 0.0 { return }
+        entry := &self.entries[idx]
+        if entry.width == 0 { return }
+        w := f64(entry.width) * scale
+        h := f64(entry.height) * scale
+        uv := macos.UVRect {
+            left: 0.0, right: f32(entry.width) / f32(self.width),
+            top: f32(entry.row) / f32(self.height), bottom: f32(entry.row + entry.height) / f32(self.height),
         }
+        macos.atlas_quad(&mut vertices, f32(ox * 2.0 / cw - 1.0), f32(1.0 - (oy + h) * 2.0 / ch),
+            f32(w * 2.0 / cw), f32(h * 2.0 / ch), uv, macos.rgb(r, g, b))
     }
 
     fn draw_grid(&self, idx: i32, vertices: &mut []f32, cw: f64, ch: f64,
         ox: f64, oy: f64, max_w: f64, max_h: f64, r: f32, g: f32, b: f32) {
-        if idx < 0 || idx >= self.widths.len { return }
-        bw := self.widths[idx]
-        bh := self.heights[idx]
+        if idx < 0 || idx >= self.entries.len { return }
+        entry := &self.entries[idx]
+        bw := entry.width
+        bh := entry.height
         if bw <= 0 || bh <= 0 { return }
         mut cell := 14.0
         if max_w / f64(bw) < cell { cell = max_w / f64(bw) }
@@ -70,7 +94,7 @@ impl BitmapAtlas {
         if cell < 4.0 { cell = 4.0 }
         gap := if cell >= 6.0 { 1.0 } else { 0.0 }
         bg := macos.rgba(0.11, 0.14, 0.21, 0.72)
-        start := self.starts[idx]
+        start := entry.start
         for row in 0..bh {
             for col in 0..bw {
                 if vertices.len + 48 > 780000 { return }
@@ -96,28 +120,6 @@ fn fill_px(vertices: &mut []f32, cw: f64, ch: f64, x: f64, y: f64, w: f64, h: f6
     macos.quad(&mut vertices, nx, ny, nw, nh, color)
 }
 
-pub fn append_rendered_text(vertices: &mut []f32, rt: &skrift.RenderedText,
-    canvas_w: f64, canvas_h: f64, origin_x: f64, origin_y: f64,
-    pixel_scale: f64, r: f32, g: f32, b: f32) -> i32 {
-    if !rt.ok || rt.width <= 0 || rt.height <= 0 || canvas_w <= 0.0 || canvas_h <= 0.0 {
-        return 0
-    }
-    mut drawn := 0
-    for row in 0..rt.height {
-        for col in 0..rt.width {
-            if vertices.len + 48 > 780000 { return drawn }
-            cov := i32(rt.pixels[row * rt.width + col])
-            if cov == 0 { continue }
-            alpha := f32(cov) / 255.0
-            px := origin_x + f64(col) * pixel_scale
-            py := origin_y + f64(row) * pixel_scale
-            fill_px(&mut vertices, canvas_w, canvas_h, px, py, pixel_scale, pixel_scale, macos.rgba(r, g, b, alpha))
-            drawn += 1
-        }
-    }
-    drawn
-}
-
 fn empty_rt() -> skrift.RenderedText {
     skrift.RenderedText { ok: false, error: "", width: 0, height: 0, baseline: 0, advance_x: 0.0, pixels: [] }
 }
@@ -137,38 +139,39 @@ fn draw_panel(vertices: &mut []f32, cw: f64, ch: f64, x: f64, y: f64, w: f64, h:
     fill_px(&mut vertices, cw, ch, x, y, w, 2.0, macos.rgba(ar, ag, ab, 0.85))
 }
 
-fn emit_scene(vertices: &mut []f32, atlas: &BitmapAtlas,
+fn emit_scene(vertices: &mut []f32, glyphs: &mut []f32, atlas: &BitmapAtlas,
     id_h_lbl: i32, id_h_txt: i32, id_a_lbl: i32, id_a_txt: i32,
     id_c_lbl: i32, id_c_txt: i32, id_m_thin: i32, id_m_bold: i32,
     id_s_lbl: i32, id_s_txt: i32, vl_id: i32, vw_id: i32, vz_id: i32,
     cw: f64, ch: f64, ar: f32, ag: f32, ab: f32) {
     vertices.clear()
+    glyphs.clear()
     draw_panel(&mut vertices, cw, ch, 28.0, 22.0, 504.0, 114.0, ar, ag, ab)
-    atlas.draw_entry(id_h_lbl, &mut vertices, cw, ch, 44.0, 32.0, 1.0, ar, ag, ab)
-    atlas.draw_entry(id_h_txt, &mut vertices, cw, ch, 44.0, 56.0, 2.0, ar, ag, ab)
+    atlas.draw_entry(id_h_lbl, &mut glyphs, cw, ch, 44.0, 32.0, 1.0, ar, ag, ab)
+    atlas.draw_entry(id_h_txt, &mut glyphs, cw, ch, 44.0, 56.0, 2.0, ar, ag, ab)
 
     draw_panel(&mut vertices, cw, ch, 28.0, 150.0, 504.0, 114.0, ar, ag, ab)
-    atlas.draw_entry(id_a_lbl, &mut vertices, cw, ch, 44.0, 160.0, 1.0, ar, ag, ab)
-    atlas.draw_entry(id_a_txt, &mut vertices, cw, ch, 44.0, 184.0, 2.0, 0.96, 0.98, 1.0)
+    atlas.draw_entry(id_a_lbl, &mut glyphs, cw, ch, 44.0, 160.0, 1.0, ar, ag, ab)
+    atlas.draw_entry(id_a_txt, &mut glyphs, cw, ch, 44.0, 184.0, 2.0, 0.96, 0.98, 1.0)
 
     draw_panel(&mut vertices, cw, ch, 28.0, 278.0, 504.0, 114.0, ar, ag, ab)
-    atlas.draw_entry(id_c_lbl, &mut vertices, cw, ch, 44.0, 288.0, 1.0, ar, ag, ab)
-    atlas.draw_entry(id_c_txt, &mut vertices, cw, ch, 44.0, 312.0, 2.0, 0.96, 0.98, 1.0)
+    atlas.draw_entry(id_c_lbl, &mut glyphs, cw, ch, 44.0, 288.0, 1.0, ar, ag, ab)
+    atlas.draw_entry(id_c_txt, &mut glyphs, cw, ch, 44.0, 312.0, 2.0, 0.96, 0.98, 1.0)
 
     draw_panel(&mut vertices, cw, ch, 28.0, 406.0, 504.0, 134.0, ar, ag, ab)
-    atlas.draw_entry(id_m_thin, &mut vertices, cw, ch, 44.0, 422.0, 1.5, 0.76, 0.88, 1.0)
-    atlas.draw_entry(id_m_bold, &mut vertices, cw, ch, 44.0, 478.0, 1.5, 1.0, 1.0, 1.0)
+    atlas.draw_entry(id_m_thin, &mut glyphs, cw, ch, 44.0, 422.0, 1.5, 0.76, 0.88, 1.0)
+    atlas.draw_entry(id_m_bold, &mut glyphs, cw, ch, 44.0, 478.0, 1.5, 1.0, 1.0, 1.0)
 
     draw_panel(&mut vertices, cw, ch, 28.0, 554.0, 504.0, 84.0, ar, ag, ab)
-    atlas.draw_entry(id_s_lbl, &mut vertices, cw, ch, 44.0, 568.0, 1.0, 0.85, 0.90, 0.96)
-    atlas.draw_entry(id_s_txt, &mut vertices, cw, ch, 44.0, 598.0, 1.0, ar, ag, ab)
+    atlas.draw_entry(id_s_lbl, &mut glyphs, cw, ch, 44.0, 568.0, 1.0, 0.85, 0.90, 0.96)
+    atlas.draw_entry(id_s_txt, &mut glyphs, cw, ch, 44.0, 598.0, 1.0, ar, ag, ab)
 
     rx := 552.0
     rw := cw - rx - 28.0
     if rw > 120.0 {
         draw_panel(&mut vertices, cw, ch, rx, 22.0, rw, 148.0, ar, ag, ab)
-        atlas.draw_entry(vl_id, &mut vertices, cw, ch, rx + 18.0, 36.0, 1.0, ar, ag, ab)
-        atlas.draw_entry(vw_id, &mut vertices, cw, ch, rx + 18.0, 68.0, 2.0, 1.0, 1.0, 1.0)
+        atlas.draw_entry(vl_id, &mut glyphs, cw, ch, rx + 18.0, 36.0, 1.0, ar, ag, ab)
+        atlas.draw_entry(vw_id, &mut glyphs, cw, ch, rx + 18.0, 68.0, 2.0, 1.0, 1.0, 1.0)
 
         draw_panel(&mut vertices, cw, ch, rx, 184.0, rw, ch - 206.0, ar, ag, ab)
         atlas.draw_grid(vz_id, &mut vertices, cw, ch, rx + 26.0, 212.0, rw - 52.0, ch - 258.0, ar, ag, ab)
@@ -234,16 +237,30 @@ fn main() -> i32 {
         vw_ids.push(atlas.add_text(var_font, 0, 24.0, "NewYork Rg", "wght", f64(wg), "opsz", 14.0))
         vl_ids.push(atlas.add_text(label_font, 0, 12.0, f"VARIABLE wght={wg} (opsz=14)", "", 0.0, "", 0.0))
     }
+    if atlas.full || atlas.width == 0 {
+        _ := sys.eprint("could not fit the rendered text in the coverage atlas")
+        return 1
+    }
+    coverage := atlas.texture()
 
     if headless {
         mut hv: []f32 = []
-        emit_scene(&mut hv, &atlas,
+        mut glyphs: []f32 = []
+        emit_scene(&mut hv, &mut glyphs, &atlas,
             id_h_lbl, id_h_txt, id_a_lbl, id_a_txt,
             id_c_lbl, id_c_txt, id_m_thin, id_m_bold,
             id_s_lbl, id_s_txt, vl_ids[3], vw_ids[3], vz_ids[3],
             1020.0, 660.0, 0.29, 0.94, 0.77)
-        print(f"skrift-metal headless check: quads={hv.len / 48}, vertices={hv.len / 8}/100000")
-        assert(hv.len / 8 <= 100000)
+        image := macos.read_atlas_pixels(1020, 660, &hv, &glyphs, &coverage, 0.031, 0.041, 0.062)
+        if !image.ok { _ := sys.eprint(image.error); return 1 }
+        mut ink := 0
+        for y in 26..132 {
+            for x in 42..530 {
+                if image.bgra[(y * image.width + x) * 4 + 1] > 128 { ink += 1 }
+            }
+        }
+        assert(ink > 0 && glyphs.len > 0 && glyphs.len % 72 == 0)
+        print(f"skrift-metal headless check: text quads={glyphs.len / 72}, first panel ink pixels={ink}")
         return 0
     }
 
@@ -252,8 +269,12 @@ fn main() -> i32 {
         _ := sys.eprint(opened.error)
         return 1
     }
+    defer { macos.close(opened.window) }
+    uploaded := macos.upload_atlas(opened.window, &coverage)
+    if !uploaded.ok { _ := sys.eprint(uploaded.error); return 1 }
 
     mut vertices: []f32 = []
+    mut glyphs: []f32 = []
     vertices.reserve(240000)
     mut palette := 0
     mut paused := false
@@ -289,39 +310,48 @@ fn main() -> i32 {
         if palette == 1 { ar = 1.0; ag = 0.56; ab = 0.34 }
         else if palette == 2 { ar = 0.72; ag = 0.58; ab = 1.0 }
 
-        emit_scene(&mut vertices, &atlas,
+        emit_scene(&mut vertices, &mut glyphs, &atlas,
             id_h_lbl, id_h_txt, id_a_lbl, id_a_txt,
             id_c_lbl, id_c_txt, id_m_thin, id_m_bold,
             id_s_lbl, id_s_txt, vl_ids[w_idx], vw_ids[w_idx], vz_ids[w_idx],
             cw, ch, ar, ag, ab)
 
-        drawn := macos.draw(opened.window, &vertices, 0.031, 0.041, 0.062)
+        drawn := macos.draw_atlas(opened.window, &vertices, &glyphs, 0.031, 0.041, 0.062)
         if !drawn.ok {
             _ := sys.eprint(drawn.error)
-            macos.close(opened.window)
             return 1
         }
         drawn_frames = drawn.frames
         if max_frames > 0 && drawn_frames >= max_frames { running = false }
     }
 
-    macos.close(opened.window)
     print(f"skrift-metal closed after {drawn_frames} frames")
     0
 }
 
-@test fn renders_ttf_text_to_metal_quads() {
+@test fn renders_ttf_text_to_one_atlas_quad() {
     arial := "/System/Library/Fonts/Supplemental/Arial.ttf"
     if sys.metadata(arial).is_file {
         mut face := skrift.Face::from_file(arial, 0)
         assert(face.ok)
         face.set_pixel_size(20.0)
         rt := face.render_text("AV")
-        assert(rt.ok && rt.width > 0 && rt.height > 0)
+        assert(rt.ok && rt.width > 1 && rt.height > 0)
+        mut atlas := BitmapAtlas::new()
+        idx := atlas.add(&rt)
+        small := skrift.RenderedText {ok:true, error:"", width:1, height:2, baseline:0, advance_x:0.0, pixels:[127, 235]}
+        second := atlas.add(&small)
+        texture := atlas.texture()
+        assert(texture.width == rt.width && texture.height == rt.height + 2)
+        assert(bytes.equal_ranges(&texture.pixels, 0, rt.pixels.len, &rt.pixels, 0, rt.pixels.len))
+        assert(texture.pixels[rt.pixels.len] == 127 && texture.pixels[rt.pixels.len + 1] == 0)
+        assert(texture.pixels[rt.pixels.len + texture.width] == 235)
         mut vertices: []f32 = []
-        quads := append_rendered_text(&mut vertices, &rt, 640.0, 480.0, 40.0, 40.0, 1.0, 1.0, 1.0, 1.0)
-        assert(quads > 0 && vertices.len == quads * 48)
-        assert(vertices.len <= 780000)
+        atlas.draw_entry(idx, &mut vertices, 640.0, 480.0, 40.0, 40.0, 1.0, 1.0, 1.0, 1.0)
+        assert(vertices.len == 72)
         for v in &vertices { assert(v.is_finite()) }
+        vertices.clear()
+        atlas.draw_entry(second, &mut vertices, 640.0, 480.0, 40.0, 40.0, 1.0, 1.0, 1.0, 1.0)
+        assert(vertices.len == 72 && vertices[9] == 1.0 && vertices[33] == f32(rt.height) / f32(texture.height))
     }
 }

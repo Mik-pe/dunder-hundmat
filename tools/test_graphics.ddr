@@ -182,8 +182,8 @@ pub fn run_suite(compiler: string, root: string, live_graphics: bool) -> bool {
             if !run_checked(mac_app + "/Contents/MacOS/Triangle", ["--frames", "3"], work, "MTL_DEBUG_LAYER", "1", &mut stdout) { return false }
             if text.trim(stdout) != "triangle frames=3" { return common.fail("unexpected Triangle output: " + stdout) }
 
-            names: []string = ["main", "lifecycle", "events"]
-            expected: []string = ["atlas frames=3", "lifecycle cycles=3", "native event sequence ok"]
+            names: []string = ["main", "lifecycle", "events", "pixels"]
+            expected: []string = ["atlas frames=3", "lifecycle cycles=3", "native event sequence ok", "Metal pixels and atlas ok"]
             for i in 0..names.len {
                 out_bin := work + "/" + names[i]
                 if !build_isolated(compiler, ["build", root + "/dogfood/metal/" + names[i] + ".ddr", "-o", out_bin.clone()], work, false, &mut stderr) { return false }
@@ -193,6 +193,15 @@ pub fn run_suite(compiler: string, root: string, live_graphics: bool) -> bool {
                 if text.trim(stdout) != expected[i] {
                     return common.fail(names[i] + " output mismatch: " + stdout)
                 }
+            }
+            if sys.metadata(root + "/../dunder-skrift/dunder.toml").is_file {
+                skrift := work + "/skrift"
+                if !build_isolated(compiler, ["build", root + "/dogfood/skrift/main.ddr", "-o", skrift.clone()], work, false, &mut stderr) { return false }
+                if !run_checked(skrift, ["--headless-check"], work, "MTL_DEBUG_LAYER", "1", &mut stdout) { return false }
+                if !text.starts_with(stdout, "skrift-metal headless check: text quads=") { return common.fail("unexpected Skrift pixel output: " + stdout) }
+                if !run_checked(skrift, ["--frames", "3"], work, "MTL_DEBUG_LAYER", "1", &mut stdout) { return false }
+                if text.trim(stdout) != "skrift-metal closed after 3 frames" { return common.fail("unexpected Skrift window output: " + stdout) }
+                print("PASS Skrift texture atlas in a window and offscreen")
             }
             print("PASS live AppKit/Metal graphics execution")
         } else {

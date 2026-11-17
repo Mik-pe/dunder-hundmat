@@ -127,6 +127,12 @@ unsafe fn raw_bind_buffer(object: ptr, method: ptr, a0: ptr, a1: usize, a2: usiz
 pub unsafe fn bind_buffer(object: ptr, name: ptr, a0: ptr, a1: usize, a2: usize) { raw_bind_buffer(object, selector(name), a0, a1, a2) }
 
 @extern("/usr/lib/libobjc.A.dylib", "objc_msgSend")
+unsafe fn raw_bind_texture(object: ptr, method: ptr, texture: ptr, index: usize)
+pub unsafe fn bind_fragment_texture(encoder: ptr, texture: ptr, index: usize) {
+    raw_bind_texture(encoder, selector(cstr("setFragmentTexture:atIndex:")), texture, index)
+}
+
+@extern("/usr/lib/libobjc.A.dylib", "objc_msgSend")
 unsafe fn raw_draw(object: ptr, method: ptr, a0: usize, a1: usize, a2: usize)
 pub unsafe fn draw(object: ptr, name: ptr, a0: usize, a1: usize, a2: usize) { raw_draw(object, selector(name), a0, a1, a2) }
 

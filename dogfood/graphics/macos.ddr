@@ -2,6 +2,8 @@ capability unsafe
 import .macos.appkit as appkit
 import .macos.objc as objc
 import .macos.renderer as metal
+import .macos.texture
+import std.dl as dl
 
 // Native macOS window + Metal triangle-list presentation.
 // Window is a validated resource ID. Copies refer to the same native window.
@@ -22,6 +24,8 @@ pub struct Frame {
     resized: bool,
 }
 pub struct DrawResult { ok: bool, error: string, frames: i64 }
+pub struct CoverageAtlas { width: i32, height: i32, pixels: []u8 }
+pub struct PixelResult { ok: bool, error: string, width: i32, height: i32, bgra: []u8 }
 
 fn open_error(move message: string) -> OpenResult { OpenResult { ok: false, window: Window {id: 0}, error: message } }
 
@@ -60,24 +64,61 @@ pub fn poll(window: Window) -> Frame {
     unsafe { return poll_window(ref_at(metal.state()), window) }
 }
 
-unsafe fn draw_window(s: &mut metal.State, window: Window, vertices: &[]f32, red: f64, green: f64, blue: f64) -> DrawResult {
+pub fn fits_texture(width: i32, height: i32) -> bool {
+    width > 0 && height > 0 && width <= 16384 && height <= 16384 && width * height <= 16777216
+}
+fn valid_atlas(atlas: &CoverageAtlas) -> bool {
+    fits_texture(atlas.width, atlas.height) && atlas.pixels.len == atlas.width * atlas.height
+}
+fn valid_triangles(vertices: &[]f32, stride: i32) -> bool {
+    vertices.len <= 100000 * stride && vertices.len % (3 * stride) == 0
+}
+
+unsafe fn set_atlas(s: &mut metal.State, window: Window, atlas: &CoverageAtlas) -> DrawResult {
     if !matches_window(&s, window) { return DrawResult {ok:false, frames:0, error:"invalid or expired window handle"} }
     if s.closed != 0 { return DrawResult {ok:false, frames:s.frames, error:"window is closed"} }
-    if vertices.len > 800000 || vertices.len % 24 != 0 {
+    if !valid_atlas(&atlas) { return DrawResult {ok:false, frames:s.frames, error:"atlas dimensions or coverage byte count are invalid"} }
+    pool := objc.pool()
+    defer { objc.drain(pool) }
+    next := texture.upload_coverage(s.device, atlas.width, atlas.height, &atlas.pixels)
+    if next == ptr(0) { return DrawResult {ok:false, frames:s.frames, error:"Metal atlas allocation failed"} }
+    objc.release(s.atlasTexture)
+    s.atlasTexture = next
+    DrawResult {ok:true, frames:s.frames, error:""}
+}
+
+pub fn upload_atlas(window: Window, atlas: &CoverageAtlas) -> DrawResult {
+    unsafe { return set_atlas(ref_at(metal.state()), window, &atlas) }
+}
+
+unsafe fn draw_window(s: &mut metal.State, window: Window, vertices: &[]f32, text: &[]f32,
+    red: f64, green: f64, blue: f64) -> DrawResult {
+    if !matches_window(&s, window) { return DrawResult {ok:false, frames:0, error:"invalid or expired window handle"} }
+    if s.closed != 0 { return DrawResult {ok:false, frames:s.frames, error:"window is closed"} }
+    if !valid_triangles(&vertices, 8) {
         return DrawResult {ok:false, frames:s.frames, error:"vertices must be a triangle list of eight f32 values per vertex (max 100000 vertices)"}
     }
+    if !valid_triangles(&text, 12) {
+        return DrawResult {ok:false, frames:s.frames, error:"text vertices must be a triangle list of twelve f32 values per vertex (max 100000 vertices)"}
+    }
+    if text.len != 0 && s.atlasTexture == ptr(0) {
+        return DrawResult {ok:false, frames:s.frames, error:"upload a coverage atlas before drawing text"}
+    }
     pool := objc.pool()
-    if !metal.upload(&mut s, &vertices, red, green, blue) {
-        objc.drain(pool)
+    defer { objc.drain(pool) }
+    if !metal.upload(&mut s, &vertices, &text, red, green, blue) {
         return DrawResult {ok:false, frames:s.frames, error:"Metal vertex buffer allocation failed"}
     }
     rendered := metal.render(&mut s)
-    objc.drain(pool)
     if !rendered { return DrawResult {ok:false, frames:s.frames, error:"Metal command buffer failed"} }
     DrawResult {ok:true, frames:s.frames, error:""}
 }
 pub fn draw(window: Window, vertices: &[]f32, red: f64, green: f64, blue: f64) -> DrawResult {
-    unsafe { return draw_window(ref_at(metal.state()), window, &vertices, red, green, blue) }
+    text: []f32 = []
+    unsafe { return draw_window(ref_at(metal.state()), window, &vertices, &text, red, green, blue) }
+}
+pub fn draw_atlas(window: Window, vertices: &[]f32, text: &[]f32, red: f64, green: f64, blue: f64) -> DrawResult {
+    unsafe { return draw_window(ref_at(metal.state()), window, &vertices, &text, red, green, blue) }
 }
 unsafe fn close_window(s: &mut metal.State, window: Window) {
     if matches_window(&s, window) {
@@ -88,10 +129,54 @@ unsafe fn close_window(s: &mut metal.State, window: Window) {
 }
 pub fn close(window: Window) { unsafe { close_window(ref_at(metal.state()), window) } }
 
+fn pixel_error(move message: string) -> PixelResult {
+    PixelResult {ok:false, width:0, height:0, bgra:[], error:message}
+}
+
+unsafe fn offscreen(width: i32, height: i32, vertices: &[]f32, text: &[]f32, atlas: &CoverageAtlas,
+    red: f64, green: f64, blue: f64) -> PixelResult {
+    if !fits_texture(width, height) { return pixel_error("offscreen dimensions are invalid") }
+    if !valid_triangles(&vertices, 8) || !valid_triangles(&text, 12) { return pixel_error("invalid triangle list size") }
+    library := dl.open(cstr("/System/Library/Frameworks/Metal.framework/Metal"), 2)
+    if library == ptr(0) { return pixel_error("Metal framework is unavailable") }
+    defer { _ := dl.close(library) }
+    create := dl.symbol(library, cstr("MTLCreateSystemDefaultDevice"))
+    if create == ptr(0) { return pixel_error("Metal device entry point is unavailable") }
+    pool := objc.pool()
+    defer { objc.drain(pool) }
+    mut s: metal.State = zeroed()
+    defer { metal.release(&mut s) }
+    s.createDevice = ffi_fn(create)
+    if !metal.setup(&mut s) { return pixel_error("could not create an offscreen Metal renderer") }
+    if text.len != 0 {
+        s.atlasTexture = texture.upload_coverage(s.device, atlas.width, atlas.height, &atlas.pixels)
+        if s.atlasTexture == ptr(0) { return pixel_error("Metal atlas allocation failed") }
+    }
+    target := texture.color_target(s.device, width, height)
+    if target == ptr(0) { return pixel_error("Metal render target allocation failed") }
+    defer { objc.release(target) }
+    if !metal.upload(&mut s, &vertices, &text, red, green, blue) { return pixel_error("Metal vertex buffer allocation failed") }
+    if !metal.render_target(&s, target, ptr(0)) { return pixel_error("Metal offscreen rendering failed") }
+    PixelResult {ok:true, width:width, height:height, error:"", bgra:texture.read_color(target, width, height)}
+}
+
+pub fn read_pixels(width: i32, height: i32, vertices: &[]f32, red: f64, green: f64, blue: f64) -> PixelResult {
+    atlas := CoverageAtlas {width:0, height:0, pixels:[]}
+    text: []f32 = []
+    unsafe { return offscreen(width, height, &vertices, &text, &atlas, red, green, blue) }
+}
+
+pub fn read_atlas_pixels(width: i32, height: i32, vertices: &[]f32, text: &[]f32, atlas: &CoverageAtlas,
+    red: f64, green: f64, blue: f64) -> PixelResult {
+    if !valid_atlas(&atlas) { return pixel_error("atlas dimensions or coverage byte count are invalid") }
+    unsafe { return offscreen(width, height, &vertices, &text, &atlas, red, green, blue) }
+}
+
 // Geometry is ordinary Dunder. Positions are Metal clip coordinates: +Y up.
 // Each vertex is [x, y, 0, 1, red, green, blue, alpha]. Colors use straight alpha.
 pub struct Point { x: f32, y: f32 }
 pub struct Color { red: f32, green: f32, blue: f32, alpha: f32 }
+pub struct UVRect { left: f32, top: f32, right: f32, bottom: f32 }
 
 pub fn rgb(red: f32, green: f32, blue: f32) -> Color {
     Color { red: red, green: green, blue: blue, alpha: 1.0 }
@@ -128,6 +213,28 @@ pub fn quad(vertices: &mut []f32, x: f32, y: f32, width: f32, height: f32, color
     d := Point { x: x, y: y + height }
     triangle(&mut vertices, a, b, c, color)
     triangle(&mut vertices, a, c, d, color)
+}
+
+fn atlas_vertex(vertices: &mut []f32, point: Point, color: Color, u: f32, v: f32) {
+    vertex(&mut vertices, point, color)
+    vertices.push(u)
+    vertices.push(v)
+    vertices.push(0.0)
+    vertices.push(0.0)
+}
+
+// Clip coordinates use +Y up. Atlas coordinates use the top-left origin.
+pub fn atlas_quad(vertices: &mut []f32, x: f32, y: f32, width: f32, height: f32, uv: UVRect, color: Color) {
+    a := Point {x:x, y:y}
+    b := Point {x:x + width, y:y}
+    c := Point {x:x + width, y:y + height}
+    d := Point {x:x, y:y + height}
+    atlas_vertex(&mut vertices, a, color, uv.left, uv.bottom)
+    atlas_vertex(&mut vertices, b, color, uv.right, uv.bottom)
+    atlas_vertex(&mut vertices, c, color, uv.right, uv.top)
+    atlas_vertex(&mut vertices, a, color, uv.left, uv.bottom)
+    atlas_vertex(&mut vertices, c, color, uv.right, uv.top)
+    atlas_vertex(&mut vertices, d, color, uv.left, uv.top)
 }
 
 @test fn geometry_emits_interleaved_triangle_lists() {

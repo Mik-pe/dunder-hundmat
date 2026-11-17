@@ -1,0 +1,47 @@
+import ..graphics.macos as macos
+
+fn near(actual: u8, expected: i32) -> bool {
+    delta := i32(actual) - expected
+    delta >= -1 && delta <= 1
+}
+
+fn pixel(image: &macos.PixelResult, x: i32, y: i32, red: i32, green: i32, blue: i32) {
+    first := (y * image.width + x) * 4
+    assert(near(image.bgra[first], blue))
+    assert(near(image.bgra[first + 1], green))
+    assert(near(image.bgra[first + 2], red))
+    assert(image.bgra[first + 3] == 255)
+}
+
+fn main() {
+    mut solid: []f32 = []
+    macos.quad(&mut solid, -1.0, -1.0, 1.0, 2.0, macos.rgb(0.0, 1.0, 0.0))
+    baseline := macos.read_pixels(7, 3, &solid, 0.0, 0.0, 1.0)
+    if !baseline.ok { print(baseline.error); assert(false) }
+    assert(baseline.width == 7 && baseline.height == 3 && baseline.bgra.len == 84)
+    pixel(&baseline, 0, 0, 0, 255, 0)
+    pixel(&baseline, 6, 2, 0, 0, 255)
+
+    atlas := macos.CoverageAtlas {width:2, height:2, pixels:[0, 255, 128, 64]}
+    mut text: []f32 = []
+    uv := macos.UVRect {left:0.0, top:0.0, right:1.0, bottom:1.0}
+    macos.atlas_quad(&mut text, -1.0, -1.0, 2.0, 2.0, uv, macos.rgb(1.0, 0.0, 0.0))
+    assert(text.len == 72)
+    solid.clear()
+    macos.quad(&mut solid, -1.0, -1.0, 2.0, 2.0, macos.rgb(0.0, 0.0, 1.0))
+    rendered := macos.read_atlas_pixels(8, 8, &solid, &text, &atlas, 0.0, 1.0, 0.0)
+    if !rendered.ok { print(rendered.error); assert(false) }
+    assert(rendered.bgra.len == 256)
+    pixel(&rendered, 1, 1, 0, 0, 255)
+    pixel(&rendered, 6, 1, 255, 0, 0)
+    pixel(&rendered, 1, 6, 128, 0, 127)
+    pixel(&rendered, 6, 6, 64, 0, 191)
+
+    assert(!macos.read_pixels(0, 3, &solid, 0.0, 0.0, 0.0).ok)
+    assert(!macos.read_pixels(16384, 16384, &solid, 0.0, 0.0, 0.0).ok)
+    invalid := macos.CoverageAtlas {width:2, height:2, pixels:[0]}
+    assert(!macos.read_atlas_pixels(8, 8, &solid, &text, &invalid, 0.0, 0.0, 0.0).ok)
+    text.push(0.0)
+    assert(!macos.read_atlas_pixels(8, 8, &solid, &text, &atlas, 0.0, 0.0, 0.0).ok)
+    print("Metal pixels and atlas ok")
+}

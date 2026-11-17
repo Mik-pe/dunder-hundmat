@@ -19,7 +19,7 @@ Fönsteranrop kräver målet `arm64-macos`. Geometrihjälparna kan användas äv
 vid kompilering för Linux; ett nåbart fönsteranrop ger då ett målrelaterat fel.
 
 ```sh
-dunder="$(tools/bootstrap.sh)"
+dunder="$(../dunder/tools/bootstrap.sh)"
 "$dunder" run dogfood/metal/triangle.ddr
 "$dunder" run dogfood/metal/main.ddr
 ```
@@ -82,7 +82,8 @@ Kör från `dunder-hundmat`:
 
 Kontrollen ritar tre bildrutor vardera med triangeln och Atlas, öppnar och
 stänger fönster och kör AppKit-händelser genom programmets kö. Den verifierar
-också apppaketets signatur med macOS `codesign`.
+också apppaketets signatur med macOS `codesign` och kontrollerar texturens
+pixlar med Metal API Validation.
 
 ## Fönster och resultat
 
@@ -119,6 +120,34 @@ väntar på GPU-kommandots slutförande innan `draw` återvänder och återanvä
 ingen GPU-buffer mellan uppladdningar. Dunders vertexarray kan återanvändas.
 Om fönstret är dolt, minimerat eller tillfälligt saknar drawable lyckas
 anropet utan att öka `.frames`.
+
+## Texturatlas och pixelläsning
+
+`CoverageAtlas` håller `width × height` tätt packade täckningsbyte med
+origo uppe till vänster. Ett byte på 0 är genomskinligt och 255 ger hela
+vertexfärgens alfa. `upload_atlas(window, &atlas)` kopierar täckningen
+till fönstrets Metal-textur. En ny lyckad uppladdning ersätter texturen.
+`atlas_quad` mappar ett normaliserat `UVRect` till två trianglar i
+clip coordinates. `draw_atlas(window, &solid, &text, r, g, b)` ritar
+textlagret ovanpå den vanliga geometrin. Textvertices har fyra extra
+`f32` för `[u, v, 0, 0]` efter de åtta fälten i en vanlig vertex.
+
+`read_pixels(width, height, &solid, r, g, b)` och
+`read_atlas_pixels(width, height, &solid, &text, &atlas, r, g, b)` kör
+samma ritpass mot en separat Metal-textur. De fungerar utan AppKit-fönster
+och returnerar `PixelResult.bgra` i BGRA8, radvis från det övre vänstra
+hörnet. Varje rad har `width * 4` byte. Texturer får vara högst 16 384
+pixlar per sida och högst 16 777 216 pixlar totalt.
+
+Skrift packar sina renderade textprover i en gemensam täckningstextur och
+ritar varje prov med en quad. Den förstorade pixelmatrisen är kvar för
+att visa täckningsvärdena en cell i taget.
+
+```sh
+"$dunder" run dogfood/metal/pixels.ddr
+"$dunder" run dogfood/skrift/main.ddr -- --headless-check
+"$dunder" run dogfood/skrift/main.ddr -- --frames 3
+```
 
 ## Händelser och Retina
 
