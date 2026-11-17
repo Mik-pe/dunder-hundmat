@@ -24,6 +24,11 @@ Mätningar av throughput och latens kräver den uttryckliga flaggan
 `--benchmark` efter kompilatorsökvägen. Den vanliga verifieringen gör inga
 sådana mätningar.
 
+En tolkad begäran sparar fältens positioner i mottagningsbufferten.
+`req.path(&rx_slab)`, `req.query(&rx_slab)`, `req.content_type(&rx_slab)` och
+`req.body(&rx_slab)` returnerar läsvyer direkt in i bufferten. Servern kan
+återanvända samma minne när den är färdig med vyerna.
+
 Serverns buffertar och resursägande tillstånd flyttas vid bindning och retur.
 Läsande hjälpfunktioner lånar sina parametrar; uppdateringar av parser,
 sockettabeller och buffertar använder `&mut`.

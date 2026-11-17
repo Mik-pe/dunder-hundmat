@@ -25,6 +25,21 @@ pub struct ParsedRequest {
     consumed: i32,
 }
 
+impl ParsedRequest {
+    pub fn path(&self, buf: &[]u8) -> &[]u8 from buf {
+        &buf[self.path_start..self.path_end]
+    }
+    pub fn query(&self, buf: &[]u8) -> &[]u8 from buf {
+        &buf[self.query_start..self.query_end]
+    }
+    pub fn content_type(&self, buf: &[]u8) -> &[]u8 from buf {
+        &buf[self.ct_start..self.ct_end]
+    }
+    pub fn body(&self, buf: &[]u8) -> &[]u8 from buf {
+        &buf[self.body_start..self.body_end]
+    }
+}
+
 fn incomplete() -> ParsedRequest {
     ParsedRequest {
         complete: false,

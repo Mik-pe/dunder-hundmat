@@ -1,21 +1,12 @@
 import text.scan as text
+import std.bytes
 
 fn punctuation(r: rune) -> bool {
     r == `(` || r == `)` || r == `{` || r == `}` || r == `,` || r == `=` || r == `+`
 }
 
-// A small scanner for UTF-8 words, ASCII punctuation and quoted strings.
-// Preserves token spelling; this is not the complete Dunder lexer or Unicode XID.
-@test {
-    ("") -> ""
-    ("fn hälsa(namn) { print(\"Hej 🌍\") }") -> "fn|hälsa|(|namn|)|{|print|(|\"Hej 🌍\"|)|}"
-    ("å\u{A0}ä\u{2003}ö") -> "å|ä|ö"
-    ("x = \"a\\\"b\" + y") -> "x|=|\"a\\\"b\"|+|y"
-    ("日本語 + κόσμος") -> "日本語|+|κόσμος"
-}
-pub fn tokenize(source: string) -> string {
-    mut result := ""
-    mut index := 0
+// Advance past one token and borrow its original UTF-8 spelling.
+fn next_token(source: &string, index: &mut i32) -> &[]u8 from source {
     while index < source.len {
         r := text.rune_at(source, index)
         width := text.width_at(source, index)
@@ -42,10 +33,44 @@ pub fn tokenize(source: string) -> string {
                 index = index + text.width_at(source, index)
             }
         }
-        if result.len > 0 { result = result + "|" }
-        result = result + source[start..index]
+        return &source[start..index]
     }
-    result
+    &source[index..index]
+}
+
+@test fn token_spelling_survives_the_next_scan() {
+    source := " å=\"🌍\" "
+    mut index := 0
+    word := next_token(&source, &mut index)
+    equals := next_token(&source, &mut index)
+    quoted := next_token(&source, &mut index)
+    trailing := next_token(&source, &mut index)
+    assert(index == source.len && trailing.len == 0)
+    assert(bytes.equals_text(&word, 0, word.len, "å"))
+    assert(bytes.equals_text(&equals, 0, equals.len, "="))
+    assert(bytes.equals_text(&quoted, 0, quoted.len, "\"🌍\""))
+}
+
+@test {
+    ("") -> ""
+    (" \t\u{A0}") -> ""
+    ("fn hälsa(namn) { print(\"Hej 🌍\") }") -> "fn|hälsa|(|namn|)|{|print|(|\"Hej 🌍\"|)|}"
+    ("å\u{A0}ä\u{2003}ö  ") -> "å|ä|ö"
+    ("x = \"a\\\"b\" + y") -> "x|=|\"a\\\"b\"|+|y"
+    ("日本語 + κόσμος") -> "日本語|+|κόσμος"
+}
+pub fn tokenize(source: string) -> string {
+    mut output: []u8 = []
+    mut index := 0
+    while index < source.len {
+        token := next_token(&source, &mut index)
+        if token.len == 0 { break }
+        if output.len > 0 { output.push(b'|') }
+        bytes.extend(&mut output, &token)
+    }
+    decoded := bytes.decode(&output)
+    assert(decoded.ok)
+    decoded.value
 }
 
 fn main() {

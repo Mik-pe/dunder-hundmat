@@ -138,9 +138,10 @@ provar geometri, scen, matematik och programargument utan grafikdrivrutin.
 [text/scan.ddr](text/scan.ddr) implementerar `find`, `replace`, ordräkning,
 UTF-8-gränser och avkodning i Dunder. Både textprogrammet och tokenizern
 importerar samma modul; dess fyra testgrupper körs en gång i hela trädet.
-Blanktecken är en uttryckligt listad delmängd. Tokenizern bevarar stavning
-och citattecken, men är inte hela Dunder-lexern eller en fullständig
-klassificering av Unicode-identifierare. Outslutna citat ger en assertion.
+Exemplet har egna regler för ord och blanktecken. `next_token` flyttar
+läspositionen och returnerar en bytevy över källtexten. Tokenizern skriver
+vyn direkt till resultatbufferten och bevarar stavning, citattecken och
+escape-sekvenser. En citerad sträng som saknar slutcitat ger ett assertionsfel.
 
 Strängmodellen lånar uppdelningen mellan byte och runes från
 [V](https://docs.vlang.io/v-types.html#strings). `.len` räknar byte,
