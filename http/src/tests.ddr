@@ -98,6 +98,11 @@ fn response_head_and_static_confinement() {
     assert(bytes.equals_text(&out, 0, out.len, "HTTP/1.1 200 OK\r\nContent-Length: 11\r\nContent-Type: text/html; charset=utf-8\r\nConnection: keep-alive\r\nServer: dunder-http\r\n\r\n<h1>hi</h1>"))
 
     out.clear()
+    invalid_path: []u8 = [b'/', 0xff]
+    static_files.serve(&dir, &invalid_path, false, false, &mut out)
+    assert(bytes.equals_text(&out, 0, 24, "HTTP/1.1 400 Bad Request"))
+
+    out.clear()
     req_trav := to_bytes("/../etc/passwd")
     static_files.serve(&dir, &req_trav, false, false, &mut out)
     assert(bytes.equals_text(&out, 0, 17, "HTTP/1.1 404 Not "))
